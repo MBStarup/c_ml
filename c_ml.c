@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <time.h>
+#include <math.h>
 
 #define DATA_SIZE 784
 #define DATA_WIDTH 28
