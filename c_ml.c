@@ -9,44 +9,75 @@
 #define DATA_WIDTH 28
 #define DATA_HEIGHT 28
 #define DATA_AMOUNT 1000
+#define PRINT_NUM 5
 
 typedef struct
 {
     int label;
-    float img[DATA_SIZE];
+    double img[DATA_SIZE];
 } image;
 
 typedef struct
 {
     int in;
     int out;
-    float *weights;
-    float *biases;
-    float (*func)(float);
+    double *weights;
+    double *biases;
+    double (*func)(double);
 } layer;
 
-void randomize_float_arr(float *arr, int size, float min, float max)
+void randomize_double_arr(double *arr, int size, double min, double max)
 {
     for (size_t i = 0; i < size; i++)
     {
-        arr[i] = min + (((float)rand()) / ((float)RAND_MAX)) * (max - min);
+        arr[i] = min + (((double)rand()) / ((double)RAND_MAX)) * (max - min);
     }
 }
 
-layer layer_new(int in, int out, float (*func)(float))
+void softmax(int size, double *inputs, double *outputs)
+{
+    double *e_arr = malloc(sizeof(double)*size);
+    assert(e_arr != NULL);
+    double accum = 0;
+
+    for (size_t i = 0; i < size; i++)
+    {
+        e_arr[i] = exp(inputs[i]);
+        accum += e_arr[i];
+    }
+
+    for (size_t i = 0; i < size; i++)
+    {
+        outputs[i] = e_arr[i]/accum;
+    }
+    free(e_arr);
+}
+
+double sum(int size, double *inputs)
+{
+ double accum = 0;
+
+    for (size_t i = 0; i < size; i++)
+    {
+        accum += inputs[i];
+    }
+   return accum;
+}
+
+layer layer_new(int in, int out, double (*func)(double))
 {
     layer res;
 
     res.in = in;
     res.out = out;
 
-    res.weights = malloc(in * out * sizeof(res.in));
+    res.weights = malloc(in * out * sizeof(double));
     assert(res.weights != NULL);
-    randomize_float_arr(res.weights, in * out, 0, 1);
+    randomize_double_arr(res.weights, in * out, -1, 1);
 
-    res.biases = malloc(in * out * sizeof(res.in));
+    res.biases = malloc(in * out * sizeof(double));
     assert(res.biases != NULL);
-    randomize_float_arr(res.biases, in * out, 0, 1);
+    randomize_double_arr(res.biases, in * out, -1, 1);
 
     res.func = func;
 
@@ -64,16 +95,18 @@ void layer_del(layer l)
 // if smaller will potentially segfault
 // Assumes the size of outputs matches the size of l.out
 // writes results to outputs
-void layer_apply(layer l, float *inputs, float *outputs)
+void layer_apply(layer l, double *inputs, double *outputs)
 {
     for (size_t i_out = 0; i_out < l.out; i_out++)
     {
-        int accum = 0;
+        double accum = 0;
         for (size_t i_in = 0; i_in < l.in; i_in++)
         {
             accum += l.weights[i_out * l.in + i_in] * inputs[i_in] + l.biases[i_out * l.in + i_in];
+            printf("%f, ", accum);
         }
         outputs[i_out] = l.func(accum);
+        printf("\n------------------------------------------------------------\n");
     }
 }
 
@@ -86,7 +119,7 @@ image parse_line(char *line)
     for (int i = 0; i < DATA_SIZE; i++)
     {
         token = strtok(NULL, ",");
-        result.img[i] = (float)atoi(token);
+        result.img[i] = ((double)atoi(token))/255;
     }
     return result;
 }
@@ -98,20 +131,25 @@ void print_data(image d)
     {
         for (int j = 0; j < DATA_HEIGHT; j++)
         {
-            d.img[i * DATA_WIDTH + j] > 100 ? printf("1") : printf("0");
+            d.img[i * DATA_WIDTH + j] > 0 ? printf("1") : printf("0");
         }
         printf("\n");
     }
 }
 
-float relu(float x)
+double relu(double x)
 {
     return (x > 0) ? x : 0;
 }
 
-float sigmoid(float x)
+double sigmoid(double x)
 {
     return 1.0 / (1.0 + exp(-1 * x));
+}
+
+double x(double x)
+{
+    return x;
 }
 
 int main(int argc, char const *argv[])
@@ -119,15 +157,18 @@ int main(int argc, char const *argv[])
     printf("START\n");
     const char *TRAIN_DATA_PATH = "mnist_train.csv";
     const char *TEST_DATA_PATH = "mnist_test.csv";
-
+    printf("Here :) \n");
     FILE *fptr = fopen(TRAIN_DATA_PATH, "r");
+    printf("Here :) \n");
 
     const int buffer_size = 4 * DATA_SIZE + 2;
     char buffer[buffer_size];
+    printf("Here :) \n");
 
     fgets(buffer, buffer_size, fptr);
     fgets(buffer, buffer_size, fptr);
 
+    printf("Here :) \n");
     image *data = malloc(sizeof(image) * DATA_AMOUNT);
     for (size_t i = 0; i < DATA_AMOUNT; i++)
     {
@@ -137,17 +178,20 @@ int main(int argc, char const *argv[])
     }
     fclose(fptr);
 
-    srand(time(0));
+    printf("Here :) \n");
+    srand(420);
+    //srand(time(0));
+    printf("Here1 :) \n");
 
-    layer first_layer = layer_new(DATA_SIZE, 30, sigmoid);
-    layer hidden_layer_1 = layer_new(30, 24, sigmoid);
-    layer hidden_layer_2 = layer_new(24, 50, sigmoid);
-    layer last_layer = layer_new(50, 10, sigmoid);
+    layer first_layer = layer_new(DATA_SIZE, 30, relu);
+    layer hidden_layer_1 = layer_new(30, 24, relu);
+    layer hidden_layer_2 = layer_new(24, 50, relu);
+    layer last_layer = layer_new(50, 10, relu);
 
-    float *first_result = malloc(sizeof(float) * first_layer.out);
-    float *hidden_result_1 = malloc(sizeof(float) * hidden_layer_1.out);
-    float *hidden_result_2 = malloc(sizeof(float) * hidden_layer_2.out);
-    float *last_result = malloc(sizeof(float) * last_layer.out);
+    double *first_result = malloc(sizeof(double) * first_layer.out);
+    double *hidden_result_1 = malloc(sizeof(double) * hidden_layer_1.out);
+    double *hidden_result_2 = malloc(sizeof(double) * hidden_layer_2.out);
+    double *last_result = malloc(sizeof(double) * last_layer.out);
 
     layer_apply(first_layer, data[0].img, first_result);
     layer_apply(hidden_layer_1, first_result, hidden_result_1);
@@ -159,10 +203,27 @@ int main(int argc, char const *argv[])
     layer_del(hidden_layer_2);
     layer_del(last_layer);
 
+    //softmax(last_layer.out, last_result, last_result);
+    printf("sum: %lf \n", sum(last_layer.out, last_result));
+
+    
     for (size_t i = 0; i < last_layer.out; i++)
     {
-        printf("%f, ", last_result[i]);
+        printf("%+012.5lf, ", last_result[i]);
+        if (i % PRINT_NUM == (PRINT_NUM-1)) {printf("\n");}
+
     }
+
+    // for (size_t j = 0; j < first_layer.out; j++)
+    // {
+    //     for (size_t i = 0; i < first_layer.in; i++)
+    //     {
+    //         printf("%+f, ", first_layer.weights[j*first_layer.in+i]);
+    //     }
+    //     printf("\n");
+    // }
+    
+
 
     // printf("%s", line1);
 
