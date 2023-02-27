@@ -10,9 +10,10 @@
 #define DATA_HEIGHT 28
 #define DATA_AMOUNT 13000
 #define PRINT_NUM 5
-#define LAYER_AMOUNT 4
 #define EPOCHS 5
-#define PRINTED_EXAMPLE 5
+#define PRINTED_EXAMPLE 17
+#define PRINTED_EXAMPLE_AMOUNT 3
+#define NO_PRINT
 
 typedef struct
 {
@@ -27,7 +28,7 @@ typedef struct
     int out;
     double *weights;
     double *biases;
-    double (*func)(double);
+    // double (*func)(double);
 } layer;
 
 typedef struct
@@ -37,6 +38,24 @@ typedef struct
     layer *layers;
     char *name;
 } model;
+
+// Allocates 'size' bytes initialized to 0 and asserts that the allocation succeeded
+// Memory is still freed with free()
+void *ass_calloc(size_t size)
+{
+    void *ptr = calloc(size, 1);
+    assert(ptr != NULL);
+    return ptr;
+}
+
+// Allocates 'size' bytes and asserts that the allocation succeeded
+// Memory is still freed with free()
+void *ass_malloc(size_t size)
+{
+    void *ptr = malloc(size);
+    assert(ptr != NULL);
+    return ptr;
+}
 
 void randomize_double_arr(double *arr, int size, double min, double max)
 {
@@ -48,8 +67,7 @@ void randomize_double_arr(double *arr, int size, double min, double max)
 
 void softmax(int size, double *inputs, double *outputs)
 {
-    double *e_arr = malloc(sizeof(double) * size);
-    assert(e_arr != NULL);
+    double *e_arr = ass_malloc(sizeof(double) * size);
     double accum = 0;
 
     for (size_t i = 0; i < size; i++)
@@ -76,22 +94,20 @@ double sum(int size, double *inputs)
     return accum;
 }
 
-layer layer_new(int in, int out, double (*func)(double))
+layer layer_new(int in, int out /*, double (*func)(double) */)
 {
     layer res;
 
     res.in = in;
     res.out = out;
 
-    res.weights = malloc(in * out * sizeof(double));
-    assert(res.weights != NULL);
+    res.weights = ass_malloc(sizeof(double) * in * out);
     randomize_double_arr(res.weights, in * out, -1, 1);
 
-    res.biases = malloc(out * sizeof(double));
-    assert(res.biases != NULL);
+    res.biases = ass_malloc(sizeof(double) * out);
     randomize_double_arr(res.biases, out, -1, 1);
 
-    res.func = func;
+    // res.func = func;
 
     return res;
 }
@@ -102,6 +118,8 @@ void layer_del(layer l)
     free(l.weights);
 }
 
+// Calculates the weigted sum, does not apply any activation function
+// ----------------------------
 // Assumes the size of inputs matches the size of l.in
 // if greater, will cut off remaning inputs
 // if smaller will potentially segfault
@@ -116,7 +134,7 @@ void layer_apply(layer l, double *inputs, double *outputs)
         {
             accum += l.weights[i_out * l.in + i_in] * (inputs[i_in]);
         }
-        outputs[i_out] = l.func(accum + l.biases[i_out]);
+        outputs[i_out] = accum + l.biases[i_out];
     }
 }
 
@@ -126,7 +144,7 @@ model model_new(char *name, size_t capacity)
     result.layer_capacity = capacity;
     result.layer_amount = 0;
     result.name = name;
-    result.layers = malloc(sizeof(layer) * capacity);
+    result.layers = ass_malloc(sizeof(layer) * capacity);
     return result;
 }
 
@@ -144,7 +162,9 @@ void model_del(model model)
 
 void model_add(model *model, layer layer)
 {
+#ifndef NO_PRINT
     printf("adding layer %d of %d to model %s\n", model->layer_amount + 1, model->layer_capacity, model->name);
+#endif
     assert(model->layer_amount < model->layer_capacity);
     if (model->layer_amount > 0)
     {
@@ -174,7 +194,7 @@ image parse_line(char *line)
     return result;
 }
 
-void print_data(image d)
+void print_image_data(image d)
 {
     printf("Label: %d\n", d.label);
     for (int i = 0; i < DATA_WIDTH; i++)
@@ -184,6 +204,18 @@ void print_data(image d)
             d.img[i * DATA_WIDTH + j] > 0 ? printf("  ") : printf("[]");
         }
         printf("\n");
+    }
+}
+
+void print_double_arr(size_t size, double *arr)
+{
+    for (size_t i = 0; i < size; i++)
+    {
+        printf("%+012.5lf, ", arr[i]);
+        if (i % PRINT_NUM == (PRINT_NUM - 1) && i + 1 < size)
+        {
+            printf("\n");
+        }
     }
 }
 
@@ -202,9 +234,9 @@ double sigmoid(double x)
     return 1.0 / (1.0 + exp(-1 * x));
 }
 
-double derivative_of_sigmoid(double sigmoid_x)
+double derivative_of_sigmoid(double x)
 {
-    return sigmoid_x * (1 - sigmoid_x);
+    return sigmoid(x) * (1 - sigmoid(x));
 }
 
 double x(double x)
@@ -225,131 +257,110 @@ double cost(int size, double *actual, double *expected)
 
 int main(int argc, char const *argv[])
 {
-    printf("START\n");
-    const char *TRAIN_DATA_PATH = "mnist_train.csv";
-    const char *TEST_DATA_PATH = "mnist_test.csv";
-    printf("Opening file: %s\n", TRAIN_DATA_PATH);
-    FILE *fptr = fopen(TRAIN_DATA_PATH, "r");
+    image *data = ass_malloc(sizeof(image) * DATA_AMOUNT);
 
-    const int buffer_size = 4 * DATA_SIZE + 2;
-    char buffer[buffer_size];
-
-    fgets(buffer, buffer_size, fptr);
-    fgets(buffer, buffer_size, fptr);
-
-    image *data = malloc(sizeof(image) * DATA_AMOUNT);
-    printf("\n");
-    for (size_t i = 0; i < DATA_AMOUNT; i++)
+    // file stuff
     {
-        printf("\x1b[1F");
-        char *line = fgets(buffer, buffer_size, fptr);
-        assert(line != NULL);
-        data[i] = parse_line(line);
-        printf("Parsing data: %d/%d\n", i + 1, DATA_AMOUNT);
+        printf("START\n");
+        const char *TRAIN_DATA_PATH = "mnist_train.csv";
+        const char *TEST_DATA_PATH = "mnist_test.csv";
+        printf("Opening file: %s\n", TRAIN_DATA_PATH);
+        FILE *fptr = fopen(TRAIN_DATA_PATH, "r");
+
+        const int file_buffer_size = 4 * DATA_SIZE + 2;
+        char file_buffer[file_buffer_size];
+
+        fgets(file_buffer, file_buffer_size, fptr);
+        fgets(file_buffer, file_buffer_size, fptr);
+
+        printf("\n");
+        for (size_t i = 0; i < DATA_AMOUNT; i++)
+        {
+            char *line = fgets(file_buffer, file_buffer_size, fptr);
+            assert(line != NULL);
+            data[i] = parse_line(line);
+#ifndef NO_PRINT
+            printf("\x1b[1F");
+            printf("Parsing data: %d/%d\n", i + 1, DATA_AMOUNT);
+#endif
+        }
+        fclose(fptr);
     }
-    fclose(fptr);
 
-    //srand(101);
-    srand(time(0));
+    srand(101);
+    // srand(time(0));
 
-    layer first_layer = layer_new(DATA_SIZE, 16, sigmoid);
-    layer hidden_layer_1 = layer_new(16, 16, sigmoid);
-    layer hidden_layer_2 = layer_new(16, 16, sigmoid);
-    layer last_layer = layer_new(16, 10, sigmoid);
+    model model = model_new("test_model", 4);
+    {
+        layer first_layer = layer_new(DATA_SIZE, 16);
+        layer hidden_layer_1 = layer_new(16, 16);
+        layer hidden_layer_2 = layer_new(16, 16);
+        layer last_layer = layer_new(16, 10);
 
-    model model = model_new("test_model", LAYER_AMOUNT);
-    model_add(&model, first_layer);
-    model_add(&model, hidden_layer_1);
-    model_add(&model, hidden_layer_2);
-    model_add(&model, last_layer);
+        model_add(&model, first_layer);
+        model_add(&model, hidden_layer_1);
+        model_add(&model, hidden_layer_2);
+        model_add(&model, last_layer);
+    }
 
-    double *results[DATA_AMOUNT * (LAYER_AMOUNT + 1)];
-
+    //* for every training example, allocate a buffer for the input data, followed by a buffer for the intermediate results between the layers
+    double *results[DATA_AMOUNT * (model.layer_amount + 1)];
     for (int i = 0; i < DATA_AMOUNT; i++)
     {
-        // Haven't freed very big problem but not really though
-        double *first_result = malloc(sizeof(double) * first_layer.out);       // TODO: Is never freed
-        double *hidden_result_1 = malloc(sizeof(double) * hidden_layer_1.out); // TODO: Is never freed
-        double *hidden_result_2 = malloc(sizeof(double) * hidden_layer_2.out); // TODO: Is never freed
-        double *last_result = malloc(sizeof(double) * last_layer.out);         // TODO: Is never freed
+        results[i * model.layer_amount + 0] = data[i].img; // set the zero'th "result" to the input data
+        for (size_t layer = 0; layer < model.layer_amount; layer++)
+        {
+            results[i * model.layer_amount + (layer + 1)] = ass_malloc(sizeof(double) * model.layers[layer].out); // TODO: free
+        }
 
-        results[i * LAYER_AMOUNT + 0] = data->img;
-        results[i * LAYER_AMOUNT + 1] = first_result;
-        results[i * LAYER_AMOUNT + 2] = hidden_result_1;
-        results[i * LAYER_AMOUNT + 3] = hidden_result_2;
-        results[i * LAYER_AMOUNT + 4] = last_result;
-
-        layer_apply(first_layer, data[i].img, first_result);
+        layer_apply(model.layers[0], data[i].img, results[i * model.layer_amount + (0 + 1)]); // layer 0, plus an offset of 1 for the input data at the front
         for (size_t layer = 1; layer < model.layer_amount; layer++)
         {
-            // Apply the layer, use the output from the prev layer as the input
-            layer_apply(model.layers[layer], results[layer - 1], results[layer]);
+            layer_apply(model.layers[layer], results[i * model.layer_amount + (layer - 1)], results[i * model.layer_amount + layer]); // Apply the layer, use the output from the prev layer as the input
         }
     }
 
-    // for every piece of training data, do the following
-    // start at the last layer, the training data provides an expected value that can be used to calculate local cost
-    // use this cost to calcuate the best postitions the previous layer could have been in to minimize this cost ?- with the current weights -?, this will become the expected value for the prev layer
-    // then use the cost to calclate the best value for each of the weights if the prev layer was ?- the newly calulated expected value || as it happened to be that training -?
-    // apply these || store these to sum up over all the training data at the end
-
-    // biases are probably somewhat the same
-
-    // foreach node in the current layer, calculate differential of the cost function with respect to the each of the previous nodes
-    // the differential of the current node (pre-activation func) with respect to the prev output is just the weight
-    // the differential of the current node (pre-activation func) with respect to the weight is the prev output
-    // once we have the differential of the cost (just squared difference from expected? with respect to the prev nodes, this value will tell you how much you should want the node to be adjusted
-    // sum this up, and the prev node value times this adjustment becomes the expected values for the prev layer
-
-    // where do we adjust the weights and biases then?
-    // before or after we calculate the expected values?
-
-    // foreach layer take the size of the ins times the size of the outs to get the number of weigths
-    double **weights_adjustments = malloc(model.layer_amount); // TODO: free
-    double **bias_adjustments = malloc(model.layer_amount);    // TODO: free
+    double **weights_adjustments = ass_malloc(sizeof(double *) * model.layer_amount); // TODO: free
+    double **bias_adjustments = ass_malloc(sizeof(double *) * model.layer_amount);    // TODO: free
     for (size_t layer = 0; layer < model.layer_amount; layer++)
     {
         size_t weight_n = model.layers[layer].in * model.layers[layer].out;
-        weights_adjustments[layer] = malloc(sizeof(double) * weight_n); // TODO: Clean up
-        assert(weights_adjustments[layer] != NULL);
-        memset(weights_adjustments[layer], 0, sizeof(double) * weight_n);
+        weights_adjustments[layer] = ass_calloc(sizeof(double) * weight_n); // TODO: free
 
-        bias_adjustments[layer] = malloc(sizeof(double) * model.layers[layer].out); // TODO: Clean up
-        assert(bias_adjustments[layer] != NULL);
-        memset(bias_adjustments[layer], 0, sizeof(double) * model.layers[layer].out);
+        bias_adjustments[layer] = ass_calloc(sizeof(double) * model.layers[layer].out); // TODO: free
     }
     // Now we have an array of all the adjustments we want to make to the layers' weights, which themselves are an array, initialized to zeros
     // and an array of adjustments to biases
+    printf("Starting Training\n\n");
     for (size_t epoch = 0; epoch < EPOCHS; epoch++)
     {
-        printf("EPOCH: %d/%d\n", epoch + 1, EPOCHS);
-        double one_over_trainig_amount = 1.0 /(double)DATA_AMOUNT;
+        double one_over_trainig_amount = 1.0 / (double)DATA_AMOUNT;
 
         for (size_t training = 0; training < DATA_AMOUNT; training++)
         {
-            // printf("    training: %d/%d\n", training + 1, DATA_AMOUNT);
             double *expected = data[training].expected;
             for (int layer = model.layer_amount - 1; layer >= 0; layer--)
             {
-                // printf("        layer: %d/%d\n", layer + 1, model.layer_amount);
-                double *new_expected = calloc(model.layers[layer].in, sizeof(double)); // calloc :) TODO: free
-                assert(new_expected != NULL);
+                double *new_expected = ass_calloc(sizeof(double) * model.layers[layer].in); // TODO: free
+                double one_over_input_amount = (double)1.0 / model.layers[layer].in;
                 for (size_t output_neuron = 0; output_neuron < model.layers[layer].out; output_neuron++)
                 {
-                    // printf("            out_nron: %d/%d\n", output_neuron + 1, model.layers[layer].out);
-                    double delta = (results[model.layer_amount * training + (layer + 1)][output_neuron] - expected[output_neuron]); // TODO: make sure the subtraction is in the right order
                     double dout_dz = derivative_of_sigmoid(results[model.layer_amount * training + (layer + 1)][output_neuron]);
-                    double dcost_dout = 2 * delta;
+                    double dcost_dout = 2 * (sigmoid(results[model.layer_amount * training + (layer + 1)][output_neuron]) - expected[output_neuron]);
                     for (size_t input_neuron = 0; input_neuron < model.layers[layer].in; input_neuron++)
                     {
+#ifndef NO_PRINT
+                        printf("\x1b[1F");
+                        printf("epoch: %d/%d | ", epoch + 1, EPOCHS);
+                        printf("training: %d/%d | ", training + 1, DATA_AMOUNT);
+                        printf("layer: %d/%d | ", layer + 1, model.layer_amount);
+                        printf("out_nron: %d/%d | ", output_neuron + 1, model.layers[layer].out);
+                        printf("in_nron: %d/%d | ", input_neuron, model.layers[layer].in);
+                        printf("\n");
+#endif
                         double dz_dw = results[model.layer_amount * training + layer][input_neuron];
-                        // printf("            adjusting weight: %d/%d\n", output_neuron * model.layers[layer].in + input_neuron + 1, model.layers[layer].in * model.layers[layer].out);
-                        // printf("                in_nron: %d/%d\n", input_neuron, model.layers[layer].in);
-                        //double cringe = 0.01;
-                        // printf("Calculated weight adjustment: %lf", one_over_trainig_amount * dz_dw * dout_dz * dcost_dout * cringe);
                         weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron] += one_over_trainig_amount * dz_dw * dout_dz * dcost_dout;
-                        // printf(", now the summed adjustment is %lf\n", weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron]);
-                        new_expected[input_neuron] += model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] * dout_dz * dcost_dout*(1/model.layers[layer].in);
+                        new_expected[input_neuron] += model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] * dout_dz * dcost_dout * one_over_input_amount;
                     }
                     bias_adjustments[layer][output_neuron] += dout_dz * dcost_dout * one_over_trainig_amount;
                 }
@@ -357,95 +368,79 @@ int main(int argc, char const *argv[])
             }
         }
 
-        // apply adjustments
+        // # apply adjustments:
+        // for each layer, adjust the weight of each input/output neuron pair by the amount calculated in the weights_adjustments[]
+        // for each layer, adjust the bias of each output neuron by the amount calculated in the bias_adjustments[]
         for (size_t layer = 0; layer < model.layer_amount; layer++)
         {
-            size_t weight_n = model.layers[layer].in * model.layers[layer].out;
-            // TODO: biases
+            size_t weight_n = model.layers[layer].in * model.layers[layer].out; // the amount of weights in the layer
             for (size_t output_neuron = 0; output_neuron < model.layers[layer].out; output_neuron++)
             {
                 for (size_t input_neuron = 0; input_neuron < model.layers[layer].in; input_neuron++)
                 {
-                    // printf("Epoch: %d: Adjusting weight %d in layer %d by %lf\n", epoch + 1, output_neuron * model.layers[layer].in + input_neuron, layer + 1, weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron]);
+                    // printf("Epoch: %d: Adjusting weight %d (%d x %d) in layer %d by %lf\n", epoch + 1, output_neuron * model.layers[layer].in + input_neuron, input_neuron + 1, output_neuron + 1, layer + 1, weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron]);
                     model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] += weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron];
                 }
-                // printf("Adjusting bias %d in layer %d by %lf\n", output_neuron + 1, layer + 1, bias_adjustments[layer][output_neuron]);
+                // printf("Epoch: %d: Adjusting bias %d in layer %d by %lf\n", epoch + 1, output_neuron + 1, layer + 1, bias_adjustments[layer][output_neuron]);
                 model.layers[layer].biases[output_neuron] += bias_adjustments[layer][output_neuron];
             }
 
-            memset(weights_adjustments[layer], 0, sizeof(double) * weight_n);
-            memset(bias_adjustments[layer], 0, sizeof(double) * model.layers[layer].out);
+            memset(weights_adjustments[layer], 0, sizeof(double) * weight_n);             // reset the adjustments to zero
+            memset(bias_adjustments[layer], 0, sizeof(double) * model.layers[layer].out); // reset the adjustments to zero
         }
     }
 
     // use the trained model
-    for(int i = 0; i<5; i++)
+    for (size_t i = 0; i < PRINTED_EXAMPLE_AMOUNT; i++)
     {
         {
-            double *results[LAYER_AMOUNT];
-
-            // Haven't freed very big problem but not really though
-            double *first_result = malloc(sizeof(double) * first_layer.out);       // TODO: Is never freed
-            double *hidden_result_1 = malloc(sizeof(double) * hidden_layer_1.out); // TODO: Is never freed
-            double *hidden_result_2 = malloc(sizeof(double) * hidden_layer_2.out); // TODO: Is never freed
-            double *last_result = malloc(sizeof(double) * last_layer.out);         // TODO: Is never freed
-
-            results[0] = first_result;
-            results[1] = hidden_result_1;
-            results[2] = hidden_result_2;
-            results[3] = last_result;
-
-            layer_apply(first_layer, data[PRINTED_EXAMPLE+i].img, first_result);
-            for(int sfas = 0; sfas < first_layer.out; sfas++){
-                printf("%+012.5lf, ", first_result[sfas]);
-            }
+            printf("_____________________________\n");
+            printf("\nExample image nr. %d:\n", PRINTED_EXAMPLE + i);
+            print_image_data(data[PRINTED_EXAMPLE + i]); // print the example image
             printf("\n");
+            double **final_results = ass_malloc(sizeof(double *) * model.layer_amount);
+
+            for (size_t layer = 0; layer < model.layer_amount; layer++)
+            {
+                final_results[layer] = ass_malloc(sizeof(double) * model.layers[layer].out); // TODO: free
+            }
+
+            // apply first layer manually, since there's no previous result to use as input
+            layer_apply(model.layers[0], data[PRINTED_EXAMPLE + i].img, final_results[0]);
+            for (size_t output = 0; output < model.layers[0].out; output++)
+            {
+                final_results[0][output] = sigmoid(final_results[0][output]); // apply activation function
+            }
+            // print for debug
+            printf("Layer 0 results: \n");
+            print_double_arr(model.layers[0].out, final_results[0]);
+            printf("\n------------------\n");
+
+            // for the rest of the layers apply them in a loop
             for (size_t layer = 1; layer < model.layer_amount; layer++)
             {
-                // Apply the layer, use the output from the prev layer as the input
-                layer_apply(model.layers[layer], results[layer - 1], results[layer]);
-            }
-            for(int sfas = 0; sfas < hidden_layer_1.out; sfas++){
-                printf("%+012.5lf, ", hidden_result_1[sfas]);
-            }
-            printf("\n");
-            for(int sfas = 0; sfas < hidden_layer_2.out; sfas++){
-                printf("%+012.5lf, ", hidden_result_2[sfas]);
-            }
-            printf("\n");
-
-            // layer_del(first_layer);
-            // layer_del(hidden_layer_1);
-            // layer_del(hidden_layer_2);
-            // layer_del(last_layer);
-
-            softmax(last_layer.out, last_result, last_result);
-
-            print_data(data[PRINTED_EXAMPLE+i]);
-
-            for (size_t i = 0; i < last_layer.out; i++)
-            {
-                printf("%+012.5lf, ", last_result[i]);
-                if (i % PRINT_NUM == (PRINT_NUM - 1))
+                layer_apply(model.layers[layer], final_results[layer - 1], final_results[layer]); // Apply the layer, use the output from the prev layer as the input
+                for (size_t output = 0; output < model.layers[layer].out; output++)
                 {
-                    printf("\n");
+                    final_results[layer][output] = sigmoid(final_results[layer][output]); // apply activation function
                 }
+
+                // print for debug
+                printf("Layer %d results :\n", layer + 1);
+                print_double_arr(model.layers[layer].out, final_results[layer]);
+                printf("\n------------------\n");
             }
-            printf("sum: %lf \n", sum(last_layer.out, last_result));
+
+            // apply softmax on the last result to get probability result
+            softmax(model.layers[model.layer_amount - 1].out, final_results[model.layer_amount - 1], final_results[model.layer_amount - 1]);
+
+            // print_double_arr(model.layers[model.layer_amount - 1].out, final_results[model.layer_amount - 1]); // print the resulting probability weights for the example
+
+            free(final_results);
         }
     }
 
-    // for (size_t j = 0; j < first_layer.out; j++)
-    // {
-    //     for (size_t i = 0; i < first_layer.in; i++)
-    //     {
-    //         printf("%+f, ", first_layer.weights[j*first_layer.in+i]);
-    //     }
-    //     printf("\n");
-    // }
-
-    // printf("%s", line1);
-
+    model_del(model);
     free(data);
     printf("END\n");
     return 0;
