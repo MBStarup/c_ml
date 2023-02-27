@@ -4,7 +4,6 @@
 #include <assert.h>
 #include <time.h>
 #include <math.h>
-#include <unistd.h>
 
 #define DATA_SIZE 784
 #define DATA_WIDTH 28
@@ -114,9 +113,9 @@ void layer_apply(layer l, double *inputs, double *outputs)
         double accum = 0;
         for (size_t i_in = 0; i_in < l.in; i_in++)
         {
-            accum += l.weights[i_out * l.in + i_in] * inputs[i_in] + l.biases[i_out];
+            accum += l.weights[i_out * l.in + i_in] * l.func(inputs[i_in]) + l.biases[i_out];
         }
-        outputs[i_out] = l.func(accum);
+        outputs[i_out] = accum;
     }
 }
 
@@ -192,9 +191,19 @@ double relu(double x)
     return (x > 0) ? x : 0;
 }
 
+double derivative_of_relu(double x)
+{
+    return x > 0;
+}
+
 double sigmoid(double x)
 {
     return 1.0 / (1.0 + exp(-1 * x));
+}
+
+double derivative_of_sigmoid(double x)
+{
+    return sigmoid(x) * (1 - sigmoid(x));
 }
 
 double x(double x)
@@ -236,8 +245,6 @@ int main(int argc, char const *argv[])
         assert(line != NULL);
         data[i] = parse_line(line);
         printf("Parsing data: %d/%d\n", i + 1, DATA_AMOUNT);
-        // fflush(stdin);
-        // usleep(10000); // TODO: Remove...
     }
     fclose(fptr);
 
@@ -255,7 +262,7 @@ int main(int argc, char const *argv[])
     model_add(&model, hidden_layer_2);
     model_add(&model, last_layer);
 
-    double *results[DATA_AMOUNT * LAYER_AMOUNT];
+    double *results[DATA_AMOUNT * (LAYER_AMOUNT + 1)];
 
     for (int i = 0; i < DATA_AMOUNT; i++)
     {
@@ -265,10 +272,11 @@ int main(int argc, char const *argv[])
         double *hidden_result_2 = malloc(sizeof(double) * hidden_layer_2.out); // TODO: Is never freed
         double *last_result = malloc(sizeof(double) * last_layer.out);         // TODO: Is never freed
 
-        results[i * LAYER_AMOUNT + 0] = first_result;
-        results[i * LAYER_AMOUNT + 1] = hidden_result_1;
-        results[i * LAYER_AMOUNT + 2] = hidden_result_2;
-        results[i * LAYER_AMOUNT + 3] = last_result;
+        results[i * LAYER_AMOUNT + 0] = data->img;
+        results[i * LAYER_AMOUNT + 1] = first_result;
+        results[i * LAYER_AMOUNT + 2] = hidden_result_1;
+        results[i * LAYER_AMOUNT + 3] = hidden_result_2;
+        results[i * LAYER_AMOUNT + 4] = last_result;
 
         layer_apply(first_layer, data[i].img, first_result);
         for (size_t layer = 1; layer < model.layer_amount; layer++)
@@ -311,34 +319,40 @@ int main(int argc, char const *argv[])
     }
     // Now we have an array of all the adjustments we want to make to the layers' weights, which themselves are an array, initialized to zeros
     // and an array of adjustments to biases
-
     for (size_t epoch = 0; epoch < EPOCHS; epoch++)
     {
-        // printf("EPOCH: %d/%d\n", epoch + 1, EPOCHS);
+        printf("EPOCH: %d/%d\n", epoch + 1, EPOCHS);
 
         for (size_t training = 0; training < DATA_AMOUNT; training++)
         {
             // printf("    training: %d/%d\n", training + 1, DATA_AMOUNT);
+            double *expected = data[training].expected;
             for (int layer = model.layer_amount - 1; layer >= 0; layer--)
             {
                 // printf("        layer: %d/%d\n", layer + 1, model.layer_amount);
-                double *expected = data[training].expected;
+                double one_over_weight_amount = 1.0 / ((double)(model.layers[layer].in * model.layers[layer].out));
+                double *new_expected = malloc(sizeof(double) * model.layers[layer].in); // TODO: free
+                assert(new_expected != NULL);
                 for (size_t output_neuron = 0; output_neuron < model.layers[layer].out; output_neuron++)
                 {
                     // printf("            out_nron: %d/%d\n", output_neuron + 1, model.layers[layer].out);
-                    double delta = (results[model.layer_amount * training + layer][output_neuron] - expected[output_neuron]); // TODO: make sure the subtraction is in the right order
+                    double delta = (results[model.layer_amount * training + (layer + 1)][output_neuron] - expected[output_neuron]); // TODO: make sure the subtraction is in the right order
+                    double dout_dz = derivative_of_sigmoid(results[model.layer_amount * training + (layer + 1)][output_neuron]);
+                    double dcost_dout = 2 * delta;
                     for (size_t input_neuron = 0; input_neuron < model.layers[layer].in; input_neuron++)
                     {
+                        double dz_dw = model.layers[layer].func(results[model.layer_amount * training + layer][input_neuron]);
                         // printf("            adjusting weight: %d/%d\n", output_neuron * model.layers[layer].in + input_neuron + 1, model.layers[layer].in * model.layers[layer].out);
                         // printf("                in_nron: %d/%d\n", input_neuron, model.layers[layer].in);
-                        // The desired adjustent to the weight between a given pair of output/input for a specific training case is proportial to the difference from the expected output and proportional to the strength of the input
-                        // IE. the more output from the prev layer for the given node, the more important it is the weights match, and the more the result is wrong, the more we need to adjust by to fix it
-                        // note: we += as we're summing up this desired adjustment for all the test cases
-                        // printf("Calculated weight adjustment: %lf", delta * model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron]);
-                        weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron] += delta * model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] * 1; // TODO: add scaling factor for control
-                        // printf("Now the summed adjustment is %lf\n", weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron]);
+                        double cringe = 0.01;
+                        // printf("Calculated weight adjustment: %lf", one_over_weight_amount * dz_dw * dout_dz * dcost_dout * cringe);
+                        weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron] += one_over_weight_amount * dz_dw * dout_dz * dcost_dout * cringe;
+                        // printf(", now the summed adjustment is %lf\n", weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron]);
+                        new_expected[input_neuron] = model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] * dout_dz * dcost_dout;
                     }
+                    bias_adjustments[layer][output_neuron] += dout_dz * dcost_dout;
                 }
+                expected = new_expected;
             }
         }
 
@@ -379,7 +393,7 @@ int main(int argc, char const *argv[])
         results[2] = hidden_result_2;
         results[3] = last_result;
 
-        layer_apply(first_layer, data[69].img, first_result);
+        layer_apply(first_layer, data[420].img, first_result);
         for (size_t layer = 1; layer < model.layer_amount; layer++)
         {
             // Apply the layer, use the output from the prev layer as the input
@@ -392,9 +406,8 @@ int main(int argc, char const *argv[])
         layer_del(last_layer);
 
         softmax(last_layer.out, last_result, last_result);
-        printf("sum: %lf \n", sum(last_layer.out, last_result));
 
-        print_data(data[69]);
+        print_data(data[420]);
 
         for (size_t i = 0; i < last_layer.out; i++)
         {
@@ -404,6 +417,7 @@ int main(int argc, char const *argv[])
                 printf("\n");
             }
         }
+        printf("sum: %lf \n", sum(last_layer.out, last_result));
     }
 
     // for (size_t j = 0; j < first_layer.out; j++)
