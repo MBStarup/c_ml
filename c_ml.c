@@ -8,9 +8,9 @@
 #define DATA_SIZE 784
 #define DATA_WIDTH 28
 #define DATA_HEIGHT 28
-#define DATA_AMOUNT 13000
+#define DATA_AMOUNT 1300
 #define PRINT_NUM 5
-#define EPOCHS 5
+#define EPOCHS 100
 #define PRINTED_EXAMPLE 17
 #define PRINTED_EXAMPLE_AMOUNT 3
 #define NO_PRINT
@@ -243,7 +243,7 @@ double x(double x)
 {
     return x;
 }
-// os to hvad med os to???
+
 double cost(int size, double *actual, double *expected)
 {
     double result = 0;
@@ -304,19 +304,19 @@ int main(int argc, char const *argv[])
     }
 
     //* for every training example, allocate a buffer for the input data, followed by a buffer for the intermediate results between the layers
-    double *results[DATA_AMOUNT * (model.layer_amount + 1)];
+    double **results = ass_malloc(sizeof(double *) * (DATA_AMOUNT * (model.layer_amount + 1)));
     for (int i = 0; i < DATA_AMOUNT; i++)
     {
-        results[i * model.layer_amount + 0] = data[i].img; // set the zero'th "result" to the input data
+        results[i * (model.layer_amount + 1) + 0] = data[i].img; // set the zero'th "result" to the input data
         for (size_t layer = 0; layer < model.layer_amount; layer++)
         {
-            results[i * model.layer_amount + (layer + 1)] = ass_malloc(sizeof(double) * model.layers[layer].out); // TODO: free
+            results[i * (model.layer_amount + 1) + (layer + 1)] = ass_malloc(sizeof(double) * model.layers[layer].out); // TODO: free
         }
 
-        layer_apply(model.layers[0], data[i].img, results[i * model.layer_amount + (0 + 1)]); // layer 0, plus an offset of 1 for the input data at the front
+        layer_apply(model.layers[0], data[i].img, results[i * (model.layer_amount + 1) + (0 + 1)]); // layer 0, plus an offset of 1 for the input data at the front
         for (size_t layer = 1; layer < model.layer_amount; layer++)
         {
-            layer_apply(model.layers[layer], results[i * model.layer_amount + (layer - 1)], results[i * model.layer_amount + layer]); // Apply the layer, use the output from the prev layer as the input
+            layer_apply(model.layers[layer], results[i * (model.layer_amount + 1) + layer], results[i * (model.layer_amount + 1) + layer + 1]); // Apply the layer, use the output from the prev layer as the input
         }
     }
 
@@ -335,7 +335,6 @@ int main(int argc, char const *argv[])
     for (size_t epoch = 0; epoch < EPOCHS; epoch++)
     {
         double one_over_trainig_amount = 1.0 / (double)DATA_AMOUNT;
-
         for (size_t training = 0; training < DATA_AMOUNT; training++)
         {
             double *expected = data[training].expected;
@@ -345,8 +344,8 @@ int main(int argc, char const *argv[])
                 double one_over_input_amount = (double)1.0 / model.layers[layer].in;
                 for (size_t output_neuron = 0; output_neuron < model.layers[layer].out; output_neuron++)
                 {
-                    double dout_dz = derivative_of_sigmoid(results[model.layer_amount * training + (layer + 1)][output_neuron]);
-                    double dcost_dout = 2 * (sigmoid(results[model.layer_amount * training + (layer + 1)][output_neuron]) - expected[output_neuron]);
+                    double dout_dz = derivative_of_sigmoid(results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron]);
+                    double dcost_dout = 2 * (sigmoid(results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron]) - expected[output_neuron]);
                     for (size_t input_neuron = 0; input_neuron < model.layers[layer].in; input_neuron++)
                     {
 #ifndef NO_PRINT
@@ -358,7 +357,7 @@ int main(int argc, char const *argv[])
                         printf("in_nron: %d/%d | ", input_neuron, model.layers[layer].in);
                         printf("\n");
 #endif
-                        double dz_dw = results[model.layer_amount * training + layer][input_neuron];
+                        double dz_dw = results[training * (model.layer_amount + 1) + layer][input_neuron];
                         weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron] += one_over_trainig_amount * dz_dw * dout_dz * dcost_dout;
                         new_expected[input_neuron] += model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] * dout_dz * dcost_dout * one_over_input_amount;
                     }
@@ -434,7 +433,7 @@ int main(int argc, char const *argv[])
             // apply softmax on the last result to get probability result
             softmax(model.layers[model.layer_amount - 1].out, final_results[model.layer_amount - 1], final_results[model.layer_amount - 1]);
 
-            // print_double_arr(model.layers[model.layer_amount - 1].out, final_results[model.layer_amount - 1]); // print the resulting probability weights for the example
+            print_double_arr(model.layers[model.layer_amount - 1].out, final_results[model.layer_amount - 1]); // print the resulting probability weights for the example
 
             free(final_results);
         }
