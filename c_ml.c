@@ -8,9 +8,9 @@
 #define DATA_SIZE 784
 #define DATA_WIDTH 28
 #define DATA_HEIGHT 28
-#define DATA_AMOUNT 1300
+#define DATA_AMOUNT 500
 #define PRINT_NUM 5
-#define EPOCHS 100
+#define EPOCHS 500
 #define PRINTED_EXAMPLE 17
 #define PRINTED_EXAMPLE_AMOUNT 3
 #define NO_PRINT
@@ -134,7 +134,7 @@ void layer_apply(layer l, double *inputs, double *outputs)
         {
             accum += l.weights[i_out * l.in + i_in] * (inputs[i_in]);
         }
-        outputs[i_out] = accum + l.biases[i_out];
+        outputs[i_out] = accum + l.biases[i_out]; //! BIAS
     }
 }
 
@@ -286,21 +286,26 @@ int main(int argc, char const *argv[])
         }
         fclose(fptr);
     }
-
     srand(101);
     // srand(time(0));
 
-    model model = model_new("test_model", 4);
+    model model = model_new("test_model", 2);
     {
-        layer first_layer = layer_new(DATA_SIZE, 16);
-        layer hidden_layer_1 = layer_new(16, 16);
-        layer hidden_layer_2 = layer_new(16, 16);
-        layer last_layer = layer_new(16, 10);
 
-        model_add(&model, first_layer);
-        model_add(&model, hidden_layer_1);
-        model_add(&model, hidden_layer_2);
-        model_add(&model, last_layer);
+        /*
+         *         Input[t]    WeightIH   Hidden[t]  WeightHO  Output[t]
+         *          input      --(IH)->      H       --(HO)->     O
+         *
+         *    results[t*(bs) + 0]  model.layers[0]  results[t*(bs) + 1]  model.layers[1]  results[t*(bs) + 2]  model.layers[2]  results[t*(bs) + 3]  model.layers[3]  results[t*(bs) + 4]
+         *          input            --(I_H0)->            H0              --(H0_H1)->          H1               --(H1_H2)->           H2              --(H2_O)->             O
+         *
+         *
+         *                   Target - Output => results[t*(bs) + 2] - results[t*(bs) + 1]
+         *
+         */
+
+        model_add(&model, layer_new(DATA_SIZE, 128));
+        model_add(&model, layer_new(128, 10));
     }
 
     //* for every training example, allocate a buffer for the input data, followed by a buffer for the intermediate results between the layers
@@ -332,8 +337,12 @@ int main(int argc, char const *argv[])
     // Now we have an array of all the adjustments we want to make to the layers' weights, which themselves are an array, initialized to zeros
     // and an array of adjustments to biases
     printf("Starting Training\n\n");
+    double alpha = 0.004;
+    double eta = 0.0005;
     for (size_t epoch = 0; epoch < EPOCHS; epoch++)
     {
+        if (epoch % 100 == 0)
+            printf("epoch: %d\n", epoch);
         double one_over_trainig_amount = 1.0 / (double)DATA_AMOUNT;
         for (size_t training = 0; training < DATA_AMOUNT; training++)
         {
@@ -344,8 +353,22 @@ int main(int argc, char const *argv[])
                 double one_over_input_amount = (double)1.0 / model.layers[layer].in;
                 for (size_t output_neuron = 0; output_neuron < model.layers[layer].out; output_neuron++)
                 {
+                    //* Target - Output =>  results[t*(bs) + 2]    -                                    results[t*(bs) + 1]
+                    //*                   (expected[output_neuron] - sigmoid(results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron]))
                     double dout_dz = derivative_of_sigmoid(results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron]);
-                    double dcost_dout = 2 * (sigmoid(results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron]) - expected[output_neuron]);
+                    assert(!isnan(dout_dz));
+
+                    double x = results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron];
+                    // printf("Sigmoiding: %lf\n", x);
+                    double y = sigmoid(x);
+                    // printf("y: %lf\n", y);
+                    assert(!isnan(y));
+                    double z = expected[output_neuron];
+                    // printf("z: %lf\n", z);
+                    assert(!isnan(z));
+                    double dcost_dout = 2 * (y - z);
+                    assert(!isnan(dcost_dout));
+
                     for (size_t input_neuron = 0; input_neuron < model.layers[layer].in; input_neuron++)
                     {
 #ifndef NO_PRINT
@@ -357,11 +380,33 @@ int main(int argc, char const *argv[])
                         printf("in_nron: %d/%d | ", input_neuron, model.layers[layer].in);
                         printf("\n");
 #endif
-                        double dz_dw = results[training * (model.layer_amount + 1) + layer][input_neuron];
-                        weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron] += one_over_trainig_amount * dz_dw * dout_dz * dcost_dout;
-                        new_expected[input_neuron] += model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] * dout_dz * dcost_dout * one_over_input_amount;
+
+                        double dz_dw = sigmoid(results[training * (model.layer_amount + 1) + (layer + 1) - 1][input_neuron]);
+                        assert(!isnan(dz_dw));
+
+                        // L € {3, 2, 1, 0}
+
+                        // input neuron for current layer = output neuron for layer -1
+                        // a^(L - 1)[out_nron] = > sigmoid(results[training * (model.layer_amount + 1) + (layer + 1) - 1][input_neuron]);
+                        // sigma''(z ^ (L)) = > derivative_of_sigmoid(results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron]);
+                        // 2(a ^ (L)-y) = > 2 * (sigmoid(results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron]) - expected[output_neuron])
+
+                        // DeltaWeightHO[j][k] = eta * Hidden[p][j] * DeltaO[k] + alpha * DeltaWeightHO[j][k];
+                        // eta * dz_dw * dout_dz * dcost_dout + alpha * ???
+
+                        double cringe = one_over_trainig_amount * 0.1;
+
+                        //    weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron] += one_over_trainig_amount * eta * dcost_dout * dout_dz * dz_dw;
+                        weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron] += cringe * dcost_dout * dout_dz * dz_dw + alpha * weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron];
+                        new_expected[input_neuron] += one_over_input_amount * model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] * dcost_dout * dout_dz;
+                        // printf("one_over_input_amount: %lf ", one_over_input_amount);
+                        // printf("model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron]: %lf ", model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron]);
+                        // printf("dcost_dout: %lf ", dcost_dout);
+                        // printf("dout_dz: %lf ", dout_dz);
+                        // printf("new_expected[%d]: %lf\n", input_neuron, new_expected[input_neuron]);
                     }
-                    bias_adjustments[layer][output_neuron] += dout_dz * dcost_dout * one_over_trainig_amount;
+                    // bias_adjustments[layer][output_neuron] += one_over_trainig_amount * dout_dz * dcost_dout; //! BIAS
+                    bias_adjustments[layer][output_neuron] += eta * dcost_dout * dout_dz + alpha * bias_adjustments[layer][output_neuron]; //! BIAS
                 }
                 expected = new_expected;
             }
@@ -381,7 +426,7 @@ int main(int argc, char const *argv[])
                     model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] += weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron];
                 }
                 // printf("Epoch: %d: Adjusting bias %d in layer %d by %lf\n", epoch + 1, output_neuron + 1, layer + 1, bias_adjustments[layer][output_neuron]);
-                model.layers[layer].biases[output_neuron] += bias_adjustments[layer][output_neuron];
+                model.layers[layer].biases[output_neuron] += bias_adjustments[layer][output_neuron]; //! BIAS
             }
 
             memset(weights_adjustments[layer], 0, sizeof(double) * weight_n);             // reset the adjustments to zero
@@ -393,7 +438,7 @@ int main(int argc, char const *argv[])
     for (size_t i = 0; i < PRINTED_EXAMPLE_AMOUNT; i++)
     {
         {
-            printf("_____________________________\n");
+            printf("\n_____________________________\n");
             printf("\nExample image nr. %d:\n", PRINTED_EXAMPLE + i);
             print_image_data(data[PRINTED_EXAMPLE + i]); // print the example image
             printf("\n");
@@ -431,7 +476,7 @@ int main(int argc, char const *argv[])
             }
 
             // apply softmax on the last result to get probability result
-            softmax(model.layers[model.layer_amount - 1].out, final_results[model.layer_amount - 1], final_results[model.layer_amount - 1]);
+            // softmax(model.layers[model.layer_amount - 1].out, final_results[model.layer_amount - 1], final_results[model.layer_amount - 1]);
 
             print_double_arr(model.layers[model.layer_amount - 1].out, final_results[model.layer_amount - 1]); // print the resulting probability weights for the example
 
