@@ -8,12 +8,32 @@
 #define DATA_SIZE 784
 #define DATA_WIDTH 28
 #define DATA_HEIGHT 28
-#define DATA_AMOUNT 500
+#define DATA_AMOUNT 12
 #define PRINT_NUM 5
-#define EPOCHS 500
-#define PRINTED_EXAMPLE 17
-#define PRINTED_EXAMPLE_AMOUNT 3
-#define NO_PRINT
+#define EPOCHS 20
+#define BATCH_SIZE 4
+#define PRINTED_EXAMPLE 0
+#define PRINTED_EXAMPLE_AMOUNT 12
+#define SHUFFLE_N 100
+#define _NO_PRINT
+
+#define DEBUG(fmt, var) printf("%s: " fmt, #var, var)
+#define SET_RED() printf("\e[31m")
+#define SET_YELLOW() printf("\e[93m")
+#define SET_GREEN() printf("\e[92m")
+#define SET_RESET() printf("\e[0m")
+#define DEBUG_LF(var)            \
+    do                           \
+    {                            \
+        if (var < 0)             \
+            SET_RED();           \
+        if (var == 0)            \
+            SET_YELLOW();        \
+        if (var > 0)             \
+            SET_GREEN();         \
+        DEBUG("%+012.5lf", var); \
+        SET_RESET();             \
+    } while (0)
 
 typedef struct
 {
@@ -24,8 +44,8 @@ typedef struct
 
 typedef struct
 {
-    int in;
-    int out;
+    size_t in;
+    size_t out;
     double *weights;
     double *biases;
     // double (*func)(double);
@@ -55,6 +75,79 @@ void *ass_malloc(size_t size)
     void *ptr = malloc(size);
     assert(ptr != NULL);
     return ptr;
+}
+
+// Shuffles an array by repeadedly picking two random indexes and swapping them arr_length * SHUFFLE_N times
+// ------------------------------
+// arr_length: the amount of elements in the array, accepted values: {1 .. SIZE_MAX}
+// elem_size: the size of each element in bytes, accepted values: {1 .. SIZE_MAX}
+// arr: the array to shuffle
+void shuffle_arr(size_t arr_length, size_t elem_size, void *arr)
+{
+    typedef unsigned char byte;
+    assert(sizeof(byte) == 1);
+
+    assert(arr_length > 0); // Cannot shuffle arrays of length zero
+    assert(elem_size > 0);  // Cannot shuffle arrays with zero size elements
+    assert(arr != NULL);    // Cannot shuffle NULL
+
+    byte *array = (byte *)arr;
+
+    byte *temp = ass_malloc(elem_size); // A temp variable to store a value while we shuffle
+
+    for (size_t i = 0; i < arr_length * SHUFFLE_N; i++)
+    {
+        // pick two random indicies in the arr
+        size_t a = (size_t)(((double)rand() / (double)RAND_MAX) * (arr_length)); // Shouldn't this be "... * (arr_length - 1)"? Although when I do that it seems to never shuffle the last one so...
+        size_t b = (size_t)(((double)rand() / (double)RAND_MAX) * (arr_length)); // Shouldn't this be "... * (arr_length - 1)"? Although when I do that it seems to never shuffle the last one so...
+        // if (a == PRINTED_EXAMPLE || b == PRINTED_EXAMPLE)
+        //     printf("Shufflin %d and %d\n", a, b);
+        memcpy(temp, array + (a * elem_size), elem_size);                    // temp = arr[a]
+        memcpy(array + (a * elem_size), array + (b * elem_size), elem_size); // arr[a] = arr[b]
+        memcpy(array + (b * elem_size), temp, elem_size);                    // arr[b] = temp
+    }
+
+    free(temp);
+}
+
+void __shuffle_test(size_t count)
+{
+    int arr[count];
+    for (size_t i = 0; i < count; i++)
+    {
+        arr[i] = i;
+    }
+
+    printf("\nBefore: \n");
+    for (size_t i = 0; i < count; i++)
+    {
+        printf("%3d ", arr[i]);
+        if (i % 10 == 9)
+            printf("\n");
+    }
+
+    shuffle_arr(count, sizeof(int), arr);
+    printf("\nAfter: \n");
+    for (size_t i = 0; i < count; i++)
+    {
+        printf("%3d ", arr[i]);
+        if (i % 10 == 9)
+            printf("\n");
+    }
+
+    printf("\nMatches: \n");
+    for (size_t i = 0; i < count; i++)
+    {
+        if (arr[i] == i)
+            printf("%3d ", arr[i]);
+        else
+            printf("    ");
+
+        if (i % 10 == 9)
+            printf("\n");
+    }
+
+    return;
 }
 
 void randomize_double_arr(double *arr, int size, double min, double max)
@@ -102,10 +195,10 @@ layer layer_new(int in, int out /*, double (*func)(double) */)
     res.out = out;
 
     res.weights = ass_malloc(sizeof(double) * in * out);
-    randomize_double_arr(res.weights, in * out, -1, 1);
+    randomize_double_arr(res.weights, in * out, 0, 1);
 
     res.biases = ass_malloc(sizeof(double) * out);
-    randomize_double_arr(res.biases, out, -1, 1);
+    randomize_double_arr(res.biases, out, 0, 1);
 
     // res.func = func;
 
@@ -134,7 +227,7 @@ void layer_apply(layer l, double *inputs, double *outputs)
         {
             accum += l.weights[i_out * l.in + i_in] * (inputs[i_in]);
         }
-        outputs[i_out] = accum + l.biases[i_out]; //! BIAS
+        outputs[i_out] = accum + l.biases[i_out];
     }
 }
 
@@ -196,6 +289,7 @@ image parse_line(char *line)
 
 void print_image_data(image d)
 {
+    SET_GREEN();
     printf("Label: %d\n", d.label);
     for (int i = 0; i < DATA_WIDTH; i++)
     {
@@ -205,6 +299,7 @@ void print_image_data(image d)
         }
         printf("\n");
     }
+    SET_RESET();
 }
 
 void print_double_arr(size_t size, double *arr)
@@ -219,11 +314,13 @@ void print_double_arr(size_t size, double *arr)
     }
 }
 
+// return (x > 0) ? x : 0;
 double relu(double x)
 {
     return (x > 0) ? x : 0;
 }
 
+// return x > 0;
 double derivative_of_relu(double x)
 {
     return x > 0;
@@ -286,10 +383,9 @@ int main(int argc, char const *argv[])
         }
         fclose(fptr);
     }
-    srand(101);
+    srand(420);
     // srand(time(0));
-
-    model model = model_new("test_model", 2);
+    model model = model_new("test_model", 5);
     {
 
         /*
@@ -304,29 +400,16 @@ int main(int argc, char const *argv[])
          *
          */
 
-        model_add(&model, layer_new(DATA_SIZE, 128));
-        model_add(&model, layer_new(128, 10));
+        model_add(&model, layer_new(DATA_SIZE, 8));
+        model_add(&model, layer_new(8, 8));
+        model_add(&model, layer_new(8, 8));
+        model_add(&model, layer_new(8, 8));
+        model_add(&model, layer_new(8, 10));
     }
 
-    //* for every training example, allocate a buffer for the input data, followed by a buffer for the intermediate results between the layers
-    double **results = ass_malloc(sizeof(double *) * (DATA_AMOUNT * (model.layer_amount + 1)));
-    for (int i = 0; i < DATA_AMOUNT; i++)
-    {
-        results[i * (model.layer_amount + 1) + 0] = data[i].img; // set the zero'th "result" to the input data
-        for (size_t layer = 0; layer < model.layer_amount; layer++)
-        {
-            results[i * (model.layer_amount + 1) + (layer + 1)] = ass_malloc(sizeof(double) * model.layers[layer].out); // TODO: free
-        }
-
-        layer_apply(model.layers[0], data[i].img, results[i * (model.layer_amount + 1) + (0 + 1)]); // layer 0, plus an offset of 1 for the input data at the front
-        for (size_t layer = 1; layer < model.layer_amount; layer++)
-        {
-            layer_apply(model.layers[layer], results[i * (model.layer_amount + 1) + layer], results[i * (model.layer_amount + 1) + layer + 1]); // Apply the layer, use the output from the prev layer as the input
-        }
-    }
-
-    double **weights_adjustments = ass_malloc(sizeof(double *) * model.layer_amount); // TODO: free
-    double **bias_adjustments = ass_malloc(sizeof(double *) * model.layer_amount);    // TODO: free
+    // Allocate arrays for the adjustments
+    double **weights_adjustments = ass_malloc(sizeof(double *) * model.layer_amount);
+    double **bias_adjustments = ass_malloc(sizeof(double *) * model.layer_amount);
     for (size_t layer = 0; layer < model.layer_amount; layer++)
     {
         size_t weight_n = model.layers[layer].in * model.layers[layer].out;
@@ -336,103 +419,147 @@ int main(int argc, char const *argv[])
     }
     // Now we have an array of all the adjustments we want to make to the layers' weights, which themselves are an array, initialized to zeros
     // and an array of adjustments to biases
+
+    for (size_t i = 1; i < model.layer_amount; i++)
+    {
+        printf("\n--------------------\n%d:\n", i);
+        print_double_arr(model.layers[i].in * model.layers[i].out, model.layers[i].weights);
+    }
+
     printf("Starting Training\n\n");
-    double alpha = 0.004;
-    double eta = 0.0005;
+    double one_over_batch_size = 1.0 / (double)BATCH_SIZE;
+    size_t batch_amount = DATA_AMOUNT / BATCH_SIZE;
+    assert(batch_amount * BATCH_SIZE == DATA_AMOUNT); // DATA_AMOUNT shoudl be divisble by BATCH_SIZE
     for (size_t epoch = 0; epoch < EPOCHS; epoch++)
     {
+
+        // Status printing
         if (epoch % 100 == 0)
-            printf("epoch: %d\n", epoch);
-        double one_over_trainig_amount = 1.0 / (double)DATA_AMOUNT;
-        for (size_t training = 0; training < DATA_AMOUNT; training++)
         {
-            double *expected = data[training].expected;
-            for (int layer = model.layer_amount - 1; layer >= 0; layer--)
+            DEBUG("%d\n", epoch);
+
+            if (epoch % 10000 == 0)
             {
-                double *new_expected = ass_calloc(sizeof(double) * model.layers[layer].in); // TODO: free
-                double one_over_input_amount = (double)1.0 / model.layers[layer].in;
+                for (size_t i = 1; i < model.layer_amount; i++)
+                {
+                    printf("\n--------------------\n%d:\n", i);
+                    print_double_arr(model.layers[i].in * model.layers[i].out, model.layers[i].weights);
+                }
+            }
+        }
+
+        // Shuffle data order
+        shuffle_arr(DATA_AMOUNT, sizeof(data[0]), data);
+
+        // for every batch of training
+        for (size_t batch = 0; batch < batch_amount; batch++)
+        {
+            // for every training example in the given batch, allocate a buffer for the input data, followed by a buffer for the intermediate results between the layers
+            // then fill these buffers by using the neural net
+            double **results = ass_malloc(sizeof(double *) * (BATCH_SIZE * (model.layer_amount + 1)));
+            for (int i = 0; i < BATCH_SIZE; i++)
+            {
+                results[i * (model.layer_amount + 1) + 0] = data[batch * BATCH_SIZE + i].img; // set the zero'th "result" to the input data
+                for (size_t layer = 0; layer < model.layer_amount; layer++)
+                {
+                    results[i * (model.layer_amount + 1) + (layer + 1)] = ass_malloc(sizeof(double) * model.layers[layer].out); // TODO: free
+                }
+
+                double *activated_results = ass_malloc(sizeof(double) * model.layers[0].out);
+
+                layer_apply(model.layers[0], data[batch * BATCH_SIZE + i].img, results[i * (model.layer_amount + 1) + (0 + 1)]); // layer 0, plus an offset of 1 for the input data at the front
+                for (size_t layer = 1; layer < model.layer_amount; layer++)
+                {
+                    // apply activation function to the outputs from the prevoious layer
+                    for (size_t neuron = 0; neuron < model.layers[layer].in; neuron++)
+                    {
+                        activated_results[neuron] = relu(results[i * (model.layer_amount + 1) + (layer + 1) - 1][neuron]);
+                    }
+
+                    // Apply the layer, use the activated outputs from the prev layer as the input
+                    layer_apply(model.layers[layer], activated_results, results[i * (model.layer_amount + 1) + (layer + 1)]);
+                    free(activated_results);
+                    activated_results = ass_malloc(sizeof(double) * model.layers[layer].out);
+                }
+
+                free(activated_results);
+            }
+
+            // for every training in the batch, backpropegate and calculate the weight adjustments
+            for (size_t training = 0; training < BATCH_SIZE; training++)
+            {
+
+                // For the final layer, the dcost_dout for a given output neuron is given by the derivative of the cost function with respect to that neuron (yes?) (maybe multiply by 2?)
+                double *dcost_dout = ass_malloc(sizeof(double) * model.layers[model.layer_amount - 1].out);
+                for (size_t output_neuron = 0; output_neuron < model.layers[model.layer_amount - 1].out; output_neuron++)
+                {
+                    dcost_dout[output_neuron] = data[batch * BATCH_SIZE + training].expected[output_neuron] - relu(results[(training) * (model.layer_amount + 1) + (model.layer_amount - 1 + 1)][output_neuron]);
+                }
+
+                for (int layer = model.layer_amount - 1; layer >= 0; layer--)
+                {
+                    double *next_dcost_dout = ass_calloc(sizeof(double) * model.layers[layer].in);
+                    double one_over_input_amount = (double)1.0 / model.layers[layer].in;
+                    for (size_t output_neuron = 0; output_neuron < model.layers[layer].out; output_neuron++)
+                    {
+                        double step_size = 0.000000001;
+                        double dout_dz = derivative_of_relu(results[(training) * (model.layer_amount + 1) + (layer + 1)][output_neuron]); // 1 if the result of a given output is greater than 0, else 0
+
+                        for (size_t input_neuron = 0; input_neuron < model.layers[layer].in; input_neuron++)
+                        {
+                            // the weight for a given pair of input/output neurons in a given layer
+                            double w = model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron];
+
+                            // dz_dw is just the input neuron (after activation)
+                            double dz_dw = relu(results[(training) * (model.layer_amount + 1) + (layer + 1) - 1][input_neuron]);
+
+                            // The adjustment to the weight is proportional to dCost_dWeight, ie. how big an influence the weight has on the cost function
+                            // summed up over each training in the batch
+                            weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron] += step_size * dcost_dout[output_neuron] * dout_dz * dz_dw;
+
+                            // dCost_dOut for a given output neuron in the previous layer (ie. a given input in our current layer), is proportional to the weight between that neuron and the current neuron, and the current neurons dCost_dz
+                            // summed up over all the neurons that connect to it
+                            next_dcost_dout[input_neuron] += w * dcost_dout[output_neuron] * dout_dz;
+                        }
+                        // The adjustment to the bias is proportional to that neurons influence on the cost function
+                        bias_adjustments[layer][output_neuron] += step_size * dcost_dout[output_neuron] * dout_dz;
+                    }
+                    free(dcost_dout);
+                    dcost_dout = next_dcost_dout;
+                }
+                free(dcost_dout);
+            }
+
+            // # apply adjustments:
+            // for each layer, adjust the weight of each input/output neuron pair by the amount calculated in the weights_adjustments[]
+            // for each layer, adjust the bias of each output neuron by the amount calculated in the bias_adjustments[]
+            for (size_t layer = 0; layer < model.layer_amount; layer++)
+            {
                 for (size_t output_neuron = 0; output_neuron < model.layers[layer].out; output_neuron++)
                 {
-                    //* Target - Output =>  results[t*(bs) + 2]    -                                    results[t*(bs) + 1]
-                    //*                   (expected[output_neuron] - sigmoid(results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron]))
-                    double dout_dz = derivative_of_sigmoid(results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron]);
-                    assert(!isnan(dout_dz));
-
-                    double x = results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron];
-                    // printf("Sigmoiding: %lf\n", x);
-                    double y = sigmoid(x);
-                    // printf("y: %lf\n", y);
-                    assert(!isnan(y));
-                    double z = expected[output_neuron];
-                    // printf("z: %lf\n", z);
-                    assert(!isnan(z));
-                    double dcost_dout = 2 * (y - z);
-                    assert(!isnan(dcost_dout));
-
                     for (size_t input_neuron = 0; input_neuron < model.layers[layer].in; input_neuron++)
                     {
-#ifndef NO_PRINT
-                        printf("\x1b[1F");
-                        printf("epoch: %d/%d | ", epoch + 1, EPOCHS);
-                        printf("training: %d/%d | ", training + 1, DATA_AMOUNT);
-                        printf("layer: %d/%d | ", layer + 1, model.layer_amount);
-                        printf("out_nron: %d/%d | ", output_neuron + 1, model.layers[layer].out);
-                        printf("in_nron: %d/%d | ", input_neuron, model.layers[layer].in);
-                        printf("\n");
-#endif
-
-                        double dz_dw = sigmoid(results[training * (model.layer_amount + 1) + (layer + 1) - 1][input_neuron]);
-                        assert(!isnan(dz_dw));
-
-                        // L € {3, 2, 1, 0}
-
-                        // input neuron for current layer = output neuron for layer -1
-                        // a^(L - 1)[out_nron] = > sigmoid(results[training * (model.layer_amount + 1) + (layer + 1) - 1][input_neuron]);
-                        // sigma''(z ^ (L)) = > derivative_of_sigmoid(results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron]);
-                        // 2(a ^ (L)-y) = > 2 * (sigmoid(results[training * (model.layer_amount + 1) + (layer + 1)][output_neuron]) - expected[output_neuron])
-
-                        // DeltaWeightHO[j][k] = eta * Hidden[p][j] * DeltaO[k] + alpha * DeltaWeightHO[j][k];
-                        // eta * dz_dw * dout_dz * dcost_dout + alpha * ???
-
-                        double cringe = one_over_trainig_amount * 0.1;
-
-                        //    weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron] += one_over_trainig_amount * eta * dcost_dout * dout_dz * dz_dw;
-                        weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron] += cringe * dcost_dout * dout_dz * dz_dw + alpha * weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron];
-                        new_expected[input_neuron] += one_over_input_amount * model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] * dcost_dout * dout_dz;
-                        // printf("one_over_input_amount: %lf ", one_over_input_amount);
-                        // printf("model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron]: %lf ", model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron]);
-                        // printf("dcost_dout: %lf ", dcost_dout);
-                        // printf("dout_dz: %lf ", dout_dz);
-                        // printf("new_expected[%d]: %lf\n", input_neuron, new_expected[input_neuron]);
+                        printf("Epoch: %d: Adjusting weight %d [%d x %d] (%lf) in layer %d by %lf\n", epoch, output_neuron * model.layers[layer].in + input_neuron, input_neuron, output_neuron, model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron], layer, weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron]);
+                        model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] += weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron];
                     }
-                    // bias_adjustments[layer][output_neuron] += one_over_trainig_amount * dout_dz * dcost_dout; //! BIAS
-                    bias_adjustments[layer][output_neuron] += eta * dcost_dout * dout_dz + alpha * bias_adjustments[layer][output_neuron]; //! BIAS
+                    printf("Epoch: %d: Adjusting bias %d (%lf) in layer %d by %lf\n", epoch, output_neuron, model.layers[layer].biases[output_neuron], layer, bias_adjustments[layer][output_neuron]);
+                    model.layers[layer].biases[output_neuron] += bias_adjustments[layer][output_neuron];
                 }
-                expected = new_expected;
-            }
-        }
 
-        // # apply adjustments:
-        // for each layer, adjust the weight of each input/output neuron pair by the amount calculated in the weights_adjustments[]
-        // for each layer, adjust the bias of each output neuron by the amount calculated in the bias_adjustments[]
-        for (size_t layer = 0; layer < model.layer_amount; layer++)
-        {
-            size_t weight_n = model.layers[layer].in * model.layers[layer].out; // the amount of weights in the layer
-            for (size_t output_neuron = 0; output_neuron < model.layers[layer].out; output_neuron++)
-            {
-                for (size_t input_neuron = 0; input_neuron < model.layers[layer].in; input_neuron++)
-                {
-                    // printf("Epoch: %d: Adjusting weight %d (%d x %d) in layer %d by %lf\n", epoch + 1, output_neuron * model.layers[layer].in + input_neuron, input_neuron + 1, output_neuron + 1, layer + 1, weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron]);
-                    model.layers[layer].weights[output_neuron * model.layers[layer].in + input_neuron] += weights_adjustments[layer][output_neuron * model.layers[layer].in + input_neuron];
-                }
-                // printf("Epoch: %d: Adjusting bias %d in layer %d by %lf\n", epoch + 1, output_neuron + 1, layer + 1, bias_adjustments[layer][output_neuron]);
-                model.layers[layer].biases[output_neuron] += bias_adjustments[layer][output_neuron]; //! BIAS
+                memset(weights_adjustments[layer], 0, sizeof(double) * model.layers[layer].in * model.layers[layer].out); // reset the adjustments to zero
+                memset(bias_adjustments[layer], 0, sizeof(double) * model.layers[layer].out);                             // reset the adjustments to zero
             }
-
-            memset(weights_adjustments[layer], 0, sizeof(double) * weight_n);             // reset the adjustments to zero
-            memset(bias_adjustments[layer], 0, sizeof(double) * model.layers[layer].out); // reset the adjustments to zero
         }
     }
+
+    // free adjustment buffers
+    for (size_t layer = 0; layer < model.layer_amount; layer++)
+    {
+        free(weights_adjustments[layer]);
+        free(bias_adjustments[layer]);
+    }
+    free(weights_adjustments);
+    free(bias_adjustments);
 
     // use the trained model
     for (size_t i = 0; i < PRINTED_EXAMPLE_AMOUNT; i++)
@@ -453,7 +580,7 @@ int main(int argc, char const *argv[])
             layer_apply(model.layers[0], data[PRINTED_EXAMPLE + i].img, final_results[0]);
             for (size_t output = 0; output < model.layers[0].out; output++)
             {
-                final_results[0][output] = sigmoid(final_results[0][output]); // apply activation function
+                final_results[0][output] = relu(final_results[0][output]); // apply activation function
             }
             // print for debug
             printf("Layer 0 results: \n");
@@ -466,7 +593,7 @@ int main(int argc, char const *argv[])
                 layer_apply(model.layers[layer], final_results[layer - 1], final_results[layer]); // Apply the layer, use the output from the prev layer as the input
                 for (size_t output = 0; output < model.layers[layer].out; output++)
                 {
-                    final_results[layer][output] = sigmoid(final_results[layer][output]); // apply activation function
+                    final_results[layer][output] = relu(final_results[layer][output]); // apply activation function
                 }
 
                 // print for debug
@@ -475,10 +602,30 @@ int main(int argc, char const *argv[])
                 printf("\n------------------\n");
             }
 
+            int out = 1;
+            int layer = model.layer_amount - 1;
+            printf("Output %d in layer %d with example %d = %+012.5lf | calulated as such:\n", out, layer, PRINTED_EXAMPLE + i, final_results[layer][out]);
+            double acc = model.layers[layer].biases[out];
+            printf("%+012.5lf\n", acc);
+            for (size_t in = 0; in < model.layers[layer].in; in++)
+            {
+                double input = (layer == 0 ? data[PRINTED_EXAMPLE + i].img[in] : relu(final_results[layer - 1][in]));
+                double w = model.layers[layer].weights[out * model.layers[layer].in + in];
+                acc += w * input;
+                printf(" + (");
+                DEBUG_LF(w);
+                SET_RESET();
+                printf(" * ");
+                DEBUG_LF(input);
+                printf(" ) = ");
+                DEBUG_LF(acc);
+                printf("\n");
+                SET_RESET();
+            }
+            printf("\n");
+
             // apply softmax on the last result to get probability result
             // softmax(model.layers[model.layer_amount - 1].out, final_results[model.layer_amount - 1], final_results[model.layer_amount - 1]);
-
-            print_double_arr(model.layers[model.layer_amount - 1].out, final_results[model.layer_amount - 1]); // print the resulting probability weights for the example
 
             free(final_results);
         }
