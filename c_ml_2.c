@@ -335,46 +335,45 @@ int main(int argc, char const *argv[])
                 }
 
                 // setup for backpropagation
-                double *gradient = ass_calloc(sizeof(double) * layers[layer_amount - 1].out);
+                double *dcost_dout = ass_calloc(sizeof(double) * layers[layer_amount - 1].out);
 
                 // compute derivative of error with respect to network's output
                 // ie. for the 'euclidian distance' cost function, (output  - expected)^2, this would be 2(output - expected) ∝ (output - expected)
                 for (int out = 0; out < layers[layer_amount - 1].out; out++)
                 {
-                    gradient[out] = (results[layer_amount - 1][out] - data[batch * BATCH_SIZE + training].expected[out]);
+                    dcost_dout[out] = (results[layer_amount - 1][out] - data[batch * BATCH_SIZE + training].expected[out]);
                 }
 
                 // Backpropagate
                 double eta = 0.15;
-                double *prev_layer_gradient;
+                double *next_dcost_dout;
                 for (int layer = layer_amount - 1; layer >= 0; layer--)
                 {
                     /*
                      * side note:
-                     * we're being kinda wastefull here to help generalize, since we're allocating a big array for the gradient of the input values,
+                     * we're being kinda wastefull here to help generalize, since we're allocating a big array for the dcost_dout of the input values,
                      * values for it, just to throw them out since that isn't a real layer. Definetly a possible place to optimize
                      * if we're fine with introducing more hard coded "edge cases" such as the first and last loop
                      */
-                    prev_layer_gradient = ass_calloc(sizeof(double) * layers[layer].in); // alloc new array according to the previous layers (next in the backpropagation, since we're propagating backwards) output, aka this layers input
+                    next_dcost_dout = ass_calloc(sizeof(double) * layers[layer].in); // alloc new array according to the previous layers (next in the backpropagation, since we're propagating backwards) output, aka this layers input
 
                     for (int out = 0; out < layers[layer].out; out++)
                     {
-                        double dout_dz = activation_derivative(results[layer][out]);
-                        double dcost_dout = gradient[out];
+                        double dout_dz = activation_derivative(results[layer][out]); //! <- only real diff I can see is that in the example that works, this uses the "Out" value after activation instead of the "z" value before activation, so why does 3B1B say it's the derivative of the activation of z???
                         for (int input = 0; input < layers[layer].in; input++)
                         {
                             double dz_dw = results[layer - 1][input];
-                            prev_layer_gradient[input] += (dcost_dout * dout_dz * layers[layer].weights[out * layers[layer].in + input]); // uses old weight, so has to come before adjustment
-                            layers[layer].weights[out * layers[layer].in + input] -= (eta * dcost_dout * dout_dz * dz_dw);                // adjust weight
+                            next_dcost_dout[input] += (dcost_dout[out] * dout_dz * layers[layer].weights[out * layers[layer].in + input]); // uses old weight, so has to come before adjustment
+                            layers[layer].weights[out * layers[layer].in + input] -= eta * dcost_dout[out] * dout_dz * dz_dw;              // adjust weight
                         }
-                        layers[layer].biases[out] -= eta * dcost_dout * dout_dz; // adjust bias
+                        layers[layer].biases[out] -= eta * dcost_dout[out] * dout_dz; // adjust bias
                     }
 
-                    ass_free(gradient);
-                    gradient = prev_layer_gradient; // reassign prev_layer_gradient to gradient before going to prev_layer
+                    ass_free(dcost_dout);
+                    dcost_dout = next_dcost_dout; // reassign next_dcost_dout to dcost_dout before going to prev_layer
                 }
 
-                ass_free(prev_layer_gradient);
+                ass_free(next_dcost_dout);
             }
         }
     }
