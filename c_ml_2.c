@@ -355,30 +355,19 @@ int main(int argc, char const *argv[])
                      * values for it, just to throw them out since that isn't a real layer. Definetly a possible place to optimize
                      * if we're fine with introducing more hard coded "edge cases" such as the first and last loop
                      */
-                    prev_layer_gradient = ass_malloc(sizeof(double) * layers[layer].in); // alloc new array according to the previous layers (next in the backpropagation, since we're propagating backwards) output, aka this layers input
+                    prev_layer_gradient = ass_calloc(sizeof(double) * layers[layer].in); // alloc new array according to the previous layers (next in the backpropagation, since we're propagating backwards) output, aka this layers input
 
                     for (int out = 0; out < layers[layer].out; out++)
                     {
-                        gradient[out] *= activation_derivative(results[layer][out]);
-                    }
-                    for (int input = 0; input < layers[layer].in; input++)
-                    {
-                        double g = 0.0;
-                        for (int out = 0; out < layers[layer].out; out++)
-                        {
-                            g += (gradient[out] * layers[layer].weights[out * layers[layer].in + input]);
-                        }
-                        prev_layer_gradient[input] = g;
-                    }
-
-                    // change weights using gradient
-                    for (int out = 0; out < layers[layer].out; out++)
-                    {
+                        double dout_dz = activation_derivative(results[layer][out]);
+                        double dcost_dout = gradient[out];
                         for (int input = 0; input < layers[layer].in; input++)
                         {
-                            layers[layer].weights[out * layers[layer].in + input] -= (eta * gradient[out] * results[layer - 1][input]);
+                            double dz_dw = results[layer - 1][input];
+                            prev_layer_gradient[input] += (dcost_dout * dout_dz * layers[layer].weights[out * layers[layer].in + input]); // uses old weight, so has to come before adjustment
+                            layers[layer].weights[out * layers[layer].in + input] -= (eta * dcost_dout * dout_dz * dz_dw);                // adjust weight
                         }
-                        layers[layer].biases[out] -= eta * gradient[out];
+                        layers[layer].biases[out] -= eta * dcost_dout * dout_dz; // adjust bias
                     }
 
                     ass_free(gradient);
