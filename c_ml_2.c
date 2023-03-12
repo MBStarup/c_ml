@@ -283,10 +283,15 @@ int main(int argc, char const *argv[])
     activation_derivative = derivative_of_sigmoid;
 
     layer I_H1 = layer_new(INPUT_SIZE, 128);
-    layer H1_O = layer_new(128, OUTPUT_SIZE);
+    layer H1_H2 = layer_new(128, 64);
+    layer H2_O = layer_new(64, OUTPUT_SIZE);
 
     double *I_H1_results = ass_malloc(sizeof(double) * I_H1.out);
-    double *H1_O_results = ass_malloc(sizeof(double) * H1_O.out);
+    double *H1_H2_results = ass_malloc(sizeof(double) * H1_H2.out);
+    double *H2_O_results = ass_malloc(sizeof(double) * H2_O.out);
+    layer layers[] = {I_H1, H1_H2, H2_O};
+    const size_t layer_amount = sizeof(layers) / sizeof(layers[0]);
+    DEBUG("%d\n", layer_amount);
     double *prev_layer_gradient;
     double *gradient;
     const size_t batch_amount = TRAINING_DATA_AMOUNT / BATCH_SIZE;
@@ -306,8 +311,8 @@ int main(int argc, char const *argv[])
             for (size_t training = 0; training < BATCH_SIZE; training++)
             {
 
-                prev_layer_gradient = ass_malloc(sizeof(double) * H1_O.in);
-                gradient = ass_calloc(sizeof(double) * H1_O.out);
+                prev_layer_gradient = ass_malloc(sizeof(double) * H1_H2.in);
+                gradient = ass_calloc(sizeof(double) * H2_O.out);
 
                 // forward propegate
                 // I_H1
@@ -317,44 +322,80 @@ int main(int argc, char const *argv[])
                     I_H1_results[output] = activation(I_H1_results[output]);
                 }
 
-                // H1_O
-                layer_apply(H1_O, I_H1_results, H1_O_results);
-                for (size_t output = 0; output < H1_O.out; output++)
+                // H1_H2
+                layer_apply(H1_H2, I_H1_results, H1_H2_results);
+                for (size_t output = 0; output < H1_H2.out; output++)
                 {
-                    H1_O_results[output] = activation(H1_O_results[output]);
+                    H1_H2_results[output] = activation(H1_H2_results[output]);
+                }
+
+                // H2_O
+                layer_apply(H2_O, H1_H2_results, H2_O_results);
+                for (size_t output = 0; output < H2_O.out; output++)
+                {
+                    H2_O_results[output] = activation(H2_O_results[output]);
                 }
 
                 // compute derivative of error with respect to network's output
-                for (int out = 0; out < H1_O.out; out++)
+                for (int out = 0; out < H2_O.out; out++)
                 {
-                    gradient[out] = (H1_O_results[out] - data[batch * BATCH_SIZE + training].expected[out]);
+                    gradient[out] = (H2_O_results[out] - data[batch * BATCH_SIZE + training].expected[out]);
                 }
 
                 // Backpropegate
                 double eta = 0.15;
                 // H1_O
-                for (int out = 0; out < H1_O.out; out++)
+                for (int out = 0; out < H2_O.out; out++)
                 {
-                    gradient[out] *= activation_derivative(H1_O_results[out]);
+                    gradient[out] *= activation_derivative(H2_O_results[out]);
                 }
-                for (int input = 0; input < H1_O.in; input++)
+                for (int input = 0; input < H2_O.in; input++)
                 {
                     double g = 0.0;
-                    for (int out = 0; out < H1_O.out; out++)
+                    for (int out = 0; out < H2_O.out; out++)
                     {
-                        g += (gradient[out] * H1_O.weights[out * H1_O.in + input]);
+                        g += (gradient[out] * H2_O.weights[out * H2_O.in + input]);
                     }
                     prev_layer_gradient[input] = g;
                 }
 
                 // change weights using gradient
-                for (int out = 0; out < H1_O.out; out++)
+                for (int out = 0; out < H2_O.out; out++)
                 {
-                    for (int input = 0; input < H1_O.in; input++)
+                    for (int input = 0; input < H2_O.in; input++)
                     {
-                        H1_O.weights[out * H1_O.in + input] -= (eta * gradient[out] * I_H1_results[input]);
+                        H2_O.weights[out * H2_O.in + input] -= (eta * gradient[out] * H1_H2_results[input]);
                     }
-                    H1_O.biases[out] -= eta * gradient[out];
+                    H2_O.biases[out] -= eta * gradient[out];
+                }
+
+                free(gradient);                 // free old graident
+                gradient = prev_layer_gradient; // reassign prev_layer_gradient to gradient before going to prev_layer
+                prev_layer_gradient = ass_malloc(sizeof(double) * H1_H2.in);
+
+                // H1_H2
+                for (int out = 0; out < H1_H2.out; out++)
+                {
+                    gradient[out] *= activation_derivative(H1_H2_results[out]);
+                }
+                for (int input = 0; input < H1_H2.in; input++)
+                {
+                    double g = 0.0;
+                    for (int out = 0; out < H1_H2.out; out++)
+                    {
+                        g += (gradient[out] * H1_H2.weights[out * H1_H2.in + input]);
+                    }
+                    prev_layer_gradient[input] = g;
+                }
+
+                // change weights using gradient
+                for (int out = 0; out < H1_H2.out; out++)
+                {
+                    for (int input = 0; input < H1_H2.in; input++)
+                    {
+                        H1_H2.weights[out * H1_H2.in + input] -= (eta * gradient[out] * I_H1_results[input]);
+                    }
+                    H1_H2.biases[out] -= eta * gradient[out];
                 }
 
                 free(gradient);                 // free old graident
@@ -395,8 +436,13 @@ int main(int argc, char const *argv[])
     DEBUG(":\n", I_H1);
     print_double_arr(I_H1.in, I_H1.in * I_H1.out, I_H1.weights);
     printf("\n");
-    DEBUG(":\n", H1_O);
-    print_double_arr(H1_O.in, H1_O.in * H1_O.out, H1_O.weights);
+
+    DEBUG(":\n", H1_H2);
+    print_double_arr(H1_H2.in, H1_H2.in * H1_H2.out, H1_H2.weights);
+    printf("\n");
+
+    DEBUG(":\n", H2_O);
+    print_double_arr(H2_O.in, H2_O.in * H2_O.out, H2_O.weights);
     printf("\n");
 
     for (size_t printed_example = PRINTED_EXAMPLE; printed_example < PRINTED_EXAMPLE_AMOUNT; printed_example++)
@@ -414,12 +460,21 @@ int main(int argc, char const *argv[])
                 }
             }
 
-            // H1_O
+            // H1_H2
             {
-                layer_apply(H1_O, I_H1_results, H1_O_results);
-                for (size_t output = 0; output < H1_O.out; output++)
+                layer_apply(H1_H2, I_H1_results, H1_H2_results);
+                for (size_t output = 0; output < H1_H2.out; output++)
                 {
-                    H1_O_results[output] = activation(H1_O_results[output]);
+                    H1_H2_results[output] = activation(H1_H2_results[output]);
+                }
+            }
+
+            // H2_O
+            {
+                layer_apply(H2_O, H1_H2_results, H2_O_results);
+                for (size_t output = 0; output < H2_O.out; output++)
+                {
+                    H2_O_results[output] = activation(H2_O_results[output]);
                 }
             }
         }
@@ -427,12 +482,13 @@ int main(int argc, char const *argv[])
         // softmax(H1_O.out, H1_O_results, H1_O_results);
 
         printf("results (%d):\n", printed_example);
-        print_double_arr(H1_O.out, H1_O.out, H1_O_results);
+        print_double_arr(H2_O.out, H2_O.out, H2_O_results);
         printf("\n____________________________________\n");
     }
 
     free(I_H1_results);
-    free(H1_O_results);
+    free(H1_H2_results);
+    free(H2_O_results);
     free(data);
     return 0;
 }
