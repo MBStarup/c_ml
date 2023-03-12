@@ -86,7 +86,7 @@ void ass_free(void *ptr)
 
 void randomize_double_arr(double *arr, int size, double min, double max)
 {
-    for (size_t i = 0; i < size; i++)
+    for (int i = 0; i < size; i++)
     {
         arr[i] = min + (((double)rand()) / ((double)RAND_MAX)) * (max - min);
     }
@@ -110,7 +110,7 @@ void shuffle_arr(size_t arr_length, size_t elem_size, void *arr)
 
     byte *temp = ass_malloc(elem_size); // A temp variable to store a value while we shuffle
 
-    for (size_t i = 0; i < arr_length * SHUFFLE_N; i++)
+    for (int i = 0; i < arr_length * SHUFFLE_N; i++)
     {
         // pick two random indicies in the arr
         size_t a = (size_t)(((double)rand() / (double)RAND_MAX) * (arr_length)); // Shouldn't this be "... * (arr_length - 1)"? Although when I do that it seems to never shuffle the last one so...
@@ -158,10 +158,10 @@ void layer_del(layer l)
 // writes results to outputs
 void layer_apply(layer l, double *inputs, double *outputs)
 {
-    for (size_t i_out = 0; i_out < l.out; i_out++)
+    for (int i_out = 0; i_out < l.out; i_out++)
     {
         double accum = 0;
-        for (size_t i_in = 0; i_in < l.in; i_in++)
+        for (int i_in = 0; i_in < l.in; i_in++)
         {
             accum += l.weights[i_out * l.in + i_in] * (inputs[i_in]);
         }
@@ -174,7 +174,7 @@ image parse_line(char *line)
     image result;
     char *token = strtok(line, ",");
     result.label = atoi(token);
-    for (size_t i = 0; i < OUTPUT_SIZE; i++)
+    for (int i = 0; i < OUTPUT_SIZE; i++)
     {
         result.expected[i] = 0;
     }
@@ -206,7 +206,7 @@ void print_image_data(image d)
 
 void print_double_arr(size_t print_width, size_t size, double *arr)
 {
-    for (size_t i = 0; i < size; i++)
+    for (int i = 0; i < size; i++)
     {
         printf("%+012.5lf, ", arr[i]);
         if (i % print_width == (print_width - 1) && i + 1 < size)
@@ -221,13 +221,13 @@ void softmax(int size, double *inputs, double *outputs)
     double *e_arr = ass_malloc(sizeof(double) * size);
     double accum = 0;
 
-    for (size_t i = 0; i < size; i++)
+    for (int i = 0; i < size; i++)
     {
         e_arr[i] = exp(inputs[i]);
         accum += e_arr[i];
     }
 
-    for (size_t i = 0; i < size; i++)
+    for (int i = 0; i < size; i++)
     {
         outputs[i] = e_arr[i] / accum;
     }
@@ -264,23 +264,25 @@ int main(int argc, char const *argv[])
 
     image *data = ass_malloc(sizeof(image) * TRAINING_DATA_AMOUNT);
 
+    // read data from csv
     {
         printf("START\n");
         const char *TRAIN_DATA_PATH = "mnist_train.csv";
         printf("Opening file: %s\n", TRAIN_DATA_PATH);
         FILE *fptr = fopen(TRAIN_DATA_PATH, "r");
 
-        const int file_buffer_size = 4 * INPUT_SIZE + 2;
+        const int file_buffer_size = 4 * INPUT_SIZE + 2; // make the buffer just big enough to hold a single line of well formatted data: input size times 4 for "xxx,", plus two, for the label at the front "x,"
         char file_buffer[file_buffer_size];
 
+        // the first line (the one that explains the layout) it actually longer than the buffer size, so we read twice to read past it.
         fgets(file_buffer, file_buffer_size, fptr);
         fgets(file_buffer, file_buffer_size, fptr);
 
         printf("\n");
-        for (size_t i = 0; i < TRAINING_DATA_AMOUNT; i++)
+        for (int i = 0; i < TRAINING_DATA_AMOUNT; i++)
         {
             char *line = fgets(file_buffer, file_buffer_size, fptr);
-            assert(line != NULL);
+            assert(line != NULL); // Ran out of lines when reading training data, make sure TRAINING_DATA_AMOUNT <= the amount of lines of atual data in the csv
             data[i] = parse_line(line);
         }
         fclose(fptr);
@@ -292,25 +294,21 @@ int main(int argc, char const *argv[])
     activation = sigmoid;
     activation_derivative = derivative_of_sigmoid;
 
-    layer layers[] = {layer_new(INPUT_SIZE, 128), layer_new(128, OUTPUT_SIZE)};
+    layer layers[] = {layer_new(INPUT_SIZE, 128), layer_new(128, 64), layer_new(64, OUTPUT_SIZE)};
     const size_t layer_amount = sizeof(layers) / sizeof(layers[0]);
     DEBUG("%d\n", layer_amount);
 
-    double *results[layer_amount];
-    for (size_t layer = 0; layer < layer_amount; layer++)
+    double *actual_results[layer_amount + 1]; // the actual stack allocated array for the results of one training example (including the input data)
+    double **results = &(actual_results[1]);  // offset the indexing of results by one, basically creating a "-1" index, this way the indexing still matches the layers[]
+    // results[-1] doesn't need a new allocated buffer, since it's just gonna be pointing to already allocated memory in data[]
+    for (int layer = 0; layer < layer_amount; layer++)
     {
         results[layer] = ass_malloc(sizeof(double) * layers[layer].out);
     }
-    const size_t result_amount = sizeof(results) / sizeof(results[0]);
-    DEBUG("%d\n", result_amount);
 
-    assert(layer_amount == result_amount);
-
-    double *prev_layer_gradient;
-    double *gradient;
     const size_t batch_amount = TRAINING_DATA_AMOUNT / BATCH_SIZE;
-    assert(batch_amount * BATCH_SIZE == TRAINING_DATA_AMOUNT); // DATA_AMOUNT shoudl be divisble by BATCH_SIZE
-    for (size_t epoch = 0; epoch < EPOCHS; epoch++)
+    assert(batch_amount * BATCH_SIZE == TRAINING_DATA_AMOUNT); // DATA_AMOUNT should be divisble by BATCH_SIZE
+    for (int epoch = 0; epoch < EPOCHS; epoch++)
     {
         if (epoch % 100 == 0)
         {
@@ -319,43 +317,46 @@ int main(int argc, char const *argv[])
 
         shuffle_arr(TRAINING_DATA_AMOUNT, sizeof(data[0]), data);
 
-        for (size_t batch = 0; batch < batch_amount; batch++)
+        for (int batch = 0; batch < batch_amount; batch++)
         {
 
-            for (size_t training = 0; training < BATCH_SIZE; training++)
+            for (int training = 0; training < BATCH_SIZE; training++)
             {
 
                 // forward propegate
-                double *input_array;
-                double *output_array = data[batch * BATCH_SIZE + training].img; // the "output" of the input "layer"
-                for (size_t layer = 0; layer < layer_amount; layer++)
+                results[-1] = data[batch * BATCH_SIZE + training].img; // the "output" of the input "layer" is just the input data
+                for (int layer = 0; layer < layer_amount; layer++)
                 {
-                    input_array = output_array; // the input is the previous layers output
-                    output_array = results[layer];
-                    layer_apply(layers[layer], input_array, output_array);        // apply the dense layer
-                    for (size_t output = 0; output < layers[layer].out; output++) // apply the activation
+                    layer_apply(layers[layer], results[layer - 1], results[layer]); // apply the dense layer
+                    for (int output = 0; output < layers[layer].out; output++)      // apply the activation
                     {
-                        output_array[output] = activation(output_array[output]);
+                        results[layer][output] = activation(results[layer][output]);
                     }
                 }
 
                 // setup for backpropagation
-                gradient = ass_calloc(sizeof(double) * layers[layer_amount - 1].out);
-                prev_layer_gradient = ass_malloc(sizeof(double) * layers[layer_amount - 1].in);
+                double *gradient = ass_calloc(sizeof(double) * layers[layer_amount - 1].out);
 
                 // compute derivative of error with respect to network's output
                 // ie. for the 'euclidian distance' cost function, (output  - expected)^2, this would be 2(output - expected) ∝ (output - expected)
                 for (int out = 0; out < layers[layer_amount - 1].out; out++)
                 {
-                    gradient[out] = (results[result_amount - 1][out] - data[batch * BATCH_SIZE + training].expected[out]);
+                    gradient[out] = (results[layer_amount - 1][out] - data[batch * BATCH_SIZE + training].expected[out]);
                 }
 
                 // Backpropagate
                 double eta = 0.15;
-                size_t index;
-                // H1_O
-                for (size_t layer = layer_amount - 1; layer >= 1; layer--)
+                double *prev_layer_gradient;
+                for (int layer = layer_amount - 1; layer >= 0; layer--)
                 {
+                    /*
+                     * side note:
+                     * we're being kinda wastefull here to help generalize, since we're allocating a big array for the gradient of the input values,
+                     * values for it, just to throw them out since that isn't a real layer. Definetly a possible place to optimize
+                     * if we're fine with introducing more hard coded "edge cases" such as the first and last loop
+                     */
+                    prev_layer_gradient = ass_malloc(sizeof(double) * layers[layer].in); // alloc new array according to the previous layers (next in the backpropagation, since we're propagating backwards) output, aka this layers input
+
                     for (int out = 0; out < layers[layer].out; out++)
                     {
                         gradient[out] *= activation_derivative(results[layer][out]);
@@ -380,66 +381,36 @@ int main(int argc, char const *argv[])
                         layers[layer].biases[out] -= eta * gradient[out];
                     }
 
-                    ass_free(gradient);                                                      // free old graident
-                    gradient = prev_layer_gradient;                                          // reassign prev_layer_gradient to gradient before going to prev_layer
-                    prev_layer_gradient = ass_malloc(sizeof(double) * layers[layer - 1].in); // alloc new array according to the layer-1'th layers input count
+                    ass_free(gradient);
+                    gradient = prev_layer_gradient; // reassign prev_layer_gradient to gradient before going to prev_layer
                 }
 
-                // Last layer needs special treatment since the input can't be generalized as results[index-1], since it's not the result of a layer
-                index = 0;
-                for (int out = 0; out < layers[index].out; out++)
-                {
-                    gradient[out] *= activation_derivative(results[index][out]);
-                }
-                for (int input = 0; input < layers[index].in; input++)
-                {
-                    double g = 0.0;
-                    for (int out = 0; out < layers[index].out; out++)
-                    {
-                        g += (gradient[out] * layers[index].weights[out * layers[index].in + input]);
-                    }
-                    prev_layer_gradient[input] = g;
-                }
-
-                // change weights using gradient
-                for (int out = 0; out < layers[index].out; out++)
-                {
-                    for (int input = 0; input < layers[index].in; input++)
-                    {
-                        layers[index].weights[out * layers[index].in + input] -= (eta * gradient[out] * data[batch * BATCH_SIZE + training].img[input]);
-                    }
-                    layers[index].biases[out] -= eta * gradient[out];
-                }
-
-                ass_free(gradient);
                 ass_free(prev_layer_gradient);
             }
         }
     }
 
-    for (size_t layer = 0; layer < layer_amount; layer++)
-    {
-        DEBUG("%d:\n", layer);
-        print_double_arr(layers[layer].in, layers[layer].in * layers[layer].out, layers[layer].weights);
-        printf("\n");
-    }
+    // print layer weights
+    // for (int layer = 0; layer < layer_amount; layer++)
+    // {
+    // DEBUG("%d:\n", layer);
+    // print_double_arr(layers[layer].in, layers[layer].in * layers[layer].out, layers[layer].weights);
+    // printf("\n");
+    // }
 
-    for (size_t printed_example = PRINTED_EXAMPLE; printed_example < PRINTED_EXAMPLE_AMOUNT; printed_example++)
+    // print examples to look at
+    for (int printed_example = PRINTED_EXAMPLE; printed_example < PRINTED_EXAMPLE_AMOUNT; printed_example++)
     {
-        printf("using model on %d:\n", printed_example);
+        printf("Using model on data nr. (%d):\n", printed_example);
         print_image_data(data[printed_example]); // print the example image
 
         // forward propegate
-        layer_apply(layers[0], data[printed_example].img, results[0]);
-        for (size_t output = 0; output < layers[0].out; output++)
-        {
-            results[0][output] = activation(results[0][output]);
-        }
-        for (size_t layer = 1; layer < layer_amount; layer++)
+        results[-1] = data[printed_example].img;
+        for (int layer = 0; layer < layer_amount; layer++)
         {
             {
                 layer_apply(layers[layer], results[layer - 1], results[layer]);
-                for (size_t output = 0; output < layers[layer].out; output++)
+                for (int output = 0; output < layers[layer].out; output++)
                 {
                     results[layer][output] = activation(results[layer][output]);
                 }
@@ -448,19 +419,20 @@ int main(int argc, char const *argv[])
 
         // softmax((layers[layer_amount - 1].out, results[layer_amount - 1], results[layer_amount - 1]);
 
-        printf("results (%d):\n", printed_example);
+        printf("Results data nr. (%d):\n", printed_example);
         print_double_arr(layers[layer_amount - 1].out, layers[layer_amount - 1].out, results[layer_amount - 1]);
         printf("\n____________________________________\n");
     }
 
     // clean up result buffers
-    for (size_t layer = 0; layer < result_amount; layer++)
+    // results[-1] doesn't need to be cleaned, as it's just a pointer to part of the data[] array
+    for (int result = 0; result < layer_amount; result++)
     {
-        ass_free(results[layer]);
+        ass_free(results[result]);
     }
 
     // clean up layers
-    for (size_t layer = 0; layer < layer_amount; layer++)
+    for (int layer = 0; layer < layer_amount; layer++)
     {
         layer_del(layers[layer]);
     }
