@@ -354,7 +354,7 @@ int main(int argc, char const *argv[])
                     {
                         H1_O.weights[out * H1_O.in + input] -= (eta * gradient[out] * I_H1_results[input]);
                     }
-                    H1_O.biases[H1_O.in] -= eta * gradient[out];
+                    H1_O.biases[out] -= eta * gradient[out];
                 }
 
                 free(gradient);                 // free old graident
@@ -383,7 +383,7 @@ int main(int argc, char const *argv[])
                     {
                         I_H1.weights[out * I_H1.in + input] -= (eta * gradient[out] * data[batch * BATCH_SIZE + training].img[input]);
                     }
-                    I_H1.biases[I_H1.in] -= eta * gradient[out];
+                    I_H1.biases[out] -= eta * gradient[out];
                 }
 
                 free(gradient);
